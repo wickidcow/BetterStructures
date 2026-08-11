@@ -2,6 +2,7 @@ package com.magmaguy.betterstructures.performance;
 
 import com.magmaguy.betterstructures.MetadataHandler;
 import com.magmaguy.betterstructures.config.DefaultConfig;
+import com.magmaguy.betterstructures.worldedit.Schematic;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -89,6 +90,11 @@ public final class GenerationScheduler {
             return;
         }
 
+        // Do not start another terrain fit while a structure is loading chunks, being
+        // pasted by FAWE, or waiting in the paste queue. This makes the full expensive
+        // path serialized, not just the final block placement.
+        if (Schematic.isBusy()) return;
+
         double mspt = Bukkit.getAverageTickTime();
         double[] tpsSamples = Bukkit.getTPS();
         double tps = tpsSamples.length == 0 ? 20.0 : tpsSamples[0];
@@ -124,8 +130,9 @@ public final class GenerationScheduler {
             throwable.printStackTrace();
         } finally {
             if (job.releaseTicketAfter()) {
-                // Keep the center chunk around briefly while schematic preparation/paste
-                // gets underway. This avoids a churny unload/reload loop in fast resource worlds.
+                // Keep the center chunk around briefly while schematic chunk preparation
+                // and the FAWE paste get underway. Schematic itself tickets every chunk
+                // touched by the structure for the duration of the actual edit.
                 new BukkitRunnable() {
                     @Override
                     public void run() {
