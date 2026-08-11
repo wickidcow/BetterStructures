@@ -11,11 +11,14 @@ public class WorldInitializer {
     public static World generateWorld(String worldName, Player player) {
         WorldCreator worldCreator = new WorldCreator(worldName);
         worldCreator.environment(World.Environment.NORMAL);
-        worldCreator.keepSpawnInMemory(false);
+        // Paper 1.21.9+ removed functional always-loaded spawn chunks. There is no
+        // replacement needed for BetterStructures' generated module worlds.
         worldCreator.generator(new VoidGenerator());
         World world = worldCreator.createWorld();
+        if (world == null) {
+            throw new IllegalStateException("Failed to create BetterStructures module world " + worldName);
+        }
         world.setAutoSave(false);
-//        player.teleport(new Location(world, 8, 16, 8));
         player.setGameMode(GameMode.SPECTATOR);
         return world;
     }
