@@ -24,7 +24,6 @@ import com.magmaguy.betterstructures.worldedit.Schematic;
 import com.magmaguy.easyminecraftgoals.NMSManager;
 import com.magmaguy.magmacore.MagmaCore;
 import com.magmaguy.magmacore.command.CommandManager;
-import com.magmaguy.magmacore.dlc.ConfigurationImporter;
 import com.magmaguy.magmacore.initialization.PluginInitializationConfig;
 import com.magmaguy.magmacore.initialization.PluginInitializationContext;
 import com.magmaguy.magmacore.initialization.PluginInitializationState;
@@ -37,6 +36,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.File;
 import java.io.IOException;
 
 public final class BetterStructures extends JavaPlugin {
@@ -129,9 +129,7 @@ public final class BetterStructures extends JavaPlugin {
         new ValidWorldsConfig();
 
         initializationContext.step("Content Importer");
-        ConfigurationImporter importer = MagmaCore.initializeImporter(this);
-        if (importer != null && importer.isEliteMobsContentImported())
-            EliteMobs.reloadAfterContentImport();
+        importPendingContent();
 
         initializationContext.step("Treasure Config");
         new TreasureConfig();
@@ -201,9 +199,7 @@ public final class BetterStructures extends JavaPlugin {
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             try {
-                ConfigurationImporter importer = MagmaCore.initializeImporter(this);
-                if (importer != null && importer.isEliteMobsContentImported())
-                    EliteMobs.reloadAfterContentImport();
+                importPendingContent();
                 new TreasureConfig();
                 new GeneratorConfig();
                 new ModuleGeneratorsConfig();
@@ -230,5 +226,24 @@ public final class BetterStructures extends JavaPlugin {
                 });
             }
         });
+    }
+
+    /**
+     * MagmaCore's published importer API is fire-and-forget. Record whether the imports
+     * directory had work before invoking it so EliteMobs is refreshed only when content
+     * may actually have been deposited into its folders.
+     */
+    private void importPendingContent() {
+        boolean hadPendingImports = hasPendingImports();
+        MagmaCore.initializeImporter(this);
+        if (hadPendingImports) {
+            EliteMobs.reloadAfterContentImport();
+        }
+    }
+
+    private boolean hasPendingImports() {
+        File importsDirectory = new File(getDataFolder(), "imports");
+        File[] entries = importsDirectory.listFiles();
+        return entries != null && entries.length > 0;
     }
 }
