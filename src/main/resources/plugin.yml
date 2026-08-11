@@ -1,19 +1,18 @@
 name: BetterStructures
-version: '2.6.3'
+version: '@Version@'
 main: com.magmaguy.betterstructures.BetterStructures
-api-version: '1.21.4'
-depend: [ WorldEdit ]
+api-version: '1.21.11'
+depend: [ FastAsyncWorldEdit ]
 softdepend:
   - EliteMobs
   - WorldGuard
-  - WorldEdit
   - Terralith
   - Iris
   - Terra
   - TerraformGenerator
 authors: [ MagmaGuy ]
-description: A plugin that adds random structures to your Minecraft world!
-website: magmaguy.com
+description: AlbionMC performance fork of BetterStructures, based on upstream 2.6.3.
+website: AlbionMC.com
 commands:
   betterstructures:
     description: Main command
