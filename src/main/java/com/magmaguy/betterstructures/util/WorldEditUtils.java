@@ -8,20 +8,17 @@ import com.sk89q.worldedit.EditSession;
 import com.sk89q.worldedit.WorldEdit;
 import com.sk89q.worldedit.WorldEditException;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
-import com.sk89q.worldedit.entity.BaseEntity;
-import com.sk89q.worldedit.entity.Entity;
+import com.sk89q.worldedit.extent.clipboard.BlockArrayClipboard;
 import com.sk89q.worldedit.extent.clipboard.Clipboard;
 import com.sk89q.worldedit.function.mask.BlockTypeMask;
 import com.sk89q.worldedit.function.operation.Operation;
 import com.sk89q.worldedit.function.operation.Operations;
 import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.regions.CuboidRegion;
-import com.sk89q.worldedit.regions.Region;
 import com.sk89q.worldedit.session.ClipboardHolder;
 import com.sk89q.worldedit.util.SideEffectSet;
 import com.sk89q.worldedit.world.block.BaseBlock;
 import com.sk89q.worldedit.world.block.BlockState;
-import com.sk89q.worldedit.world.block.BlockStateHolder;
 import com.sk89q.worldedit.world.block.BlockType;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -133,8 +130,7 @@ public class WorldEditUtils {
             Matcher matcher = pattern.matcher(text);
 
             if (matcher.find()) {
-                String extractedText = matcher.group(1);
-                return extractedText;
+                return matcher.group(1);
             } else {
                 throw new Exception();
             }
@@ -146,11 +142,8 @@ public class WorldEditUtils {
 
     private static String getNewWEFormat(@NotNull CompoundTag data, @Positive int line) {
         try {
-            //Get front text
             CompoundTag frontText = (CompoundTag) data.getValue().get("front_text");
-            //Get messages
             ListTag messages = (ListTag) frontText.getValue().get("messages");
-            //Get the line
             String text = messages.getString(line - 1);
 
             if (text.contains("\"text\":")) text = text.split("text\":\"")[1].split("\"")[0];
@@ -165,80 +158,21 @@ public class WorldEditUtils {
         return null;
     }
 
+    /**
+     * Creates a real one-block WorldEdit/FAWE clipboard rather than implementing the
+     * Clipboard interface anonymously. This keeps the fork compatible as FAWE adds
+     * new extent methods while preserving NBT-rich BaseBlock data.
+     */
     public static Clipboard createSingleBlockClipboard(Location location, BaseBlock baseBlock, BlockState blockState) {
-        return new Clipboard() {
-            @Override
-            public <T extends BlockStateHolder<T>> boolean setBlock(BlockVector3 position, T block) throws WorldEditException {
-                return false;
-            }
-
-            @Nullable
-            @Override
-            public Operation commit() {
-                return null;
-            }
-
-            @Override
-            public BlockState getBlock(BlockVector3 position) {
-                return blockState;
-            }
-
-            @Override
-            public BaseBlock getFullBlock(BlockVector3 position) {
-                return baseBlock;
-            }
-
-            @Override
-            public BlockVector3 getMinimumPoint() {
-                return BlockVector3.at(0,0,0);
-            }
-
-            @Override
-            public BlockVector3 getMaximumPoint() {
-                return BlockVector3.at(0,0,0);
-            }
-
-            @Override
-            public List<? extends Entity> getEntities(Region region) {
-                return new ArrayList<>();
-            }
-
-            @Override
-            public List<? extends Entity> getEntities() {
-                return new ArrayList<>();
-            }
-
-            @Nullable
-            @Override
-            public Entity createEntity(com.sk89q.worldedit.util.Location location, BaseEntity entity) {
-                return null;
-            }
-
-            @Override
-            public void removeEntity(Entity entity) {
-                // Synthetic one-block clipboards never contain entities.
-            }
-
-            @Override
-            public Region getRegion() {
-                return new CuboidRegion(BlockVector3.at(0,0,0), BlockVector3.at(0,0,0));
-            }
-
-            @Override
-            public BlockVector3 getDimensions() {
-                return BlockVector3.at(1,1,1);
-            }
-
-            @Override
-            public BlockVector3 getOrigin() {
-                return BlockVector3.at(0,0,0);
-            }
-
-            @Override
-            public void setOrigin(BlockVector3 origin) {
-
-            }
-        };
+        CuboidRegion region = new CuboidRegion(BlockVector3.at(0, 0, 0), BlockVector3.at(0, 0, 0));
+        BlockArrayClipboard clipboard = new BlockArrayClipboard(region);
+        clipboard.setOrigin(BlockVector3.at(0, 0, 0));
+        try {
+            clipboard.setBlock(BlockVector3.at(0, 0, 0), baseBlock);
+        } catch (WorldEditException e) {
+            throw new RuntimeException("Failed to create one-block FAWE clipboard", e);
+        }
+        return clipboard;
     }
 
     public static void pasteArmorStandsOnlyFromTransformed(Clipboard transformedClipboard, Location location) {
@@ -253,7 +187,6 @@ public class WorldEditUtils {
             BlockVector3 minPoint = transformedClipboard.getMinimumPoint();
             BlockVector3 origin   = transformedClipboard.getOrigin();
 
-            // Align entities the same way you aligned blocks: min -> base
             BlockVector3 pastePosition = BlockVector3.at(
                     location.getBlockX() + (origin.x() - minPoint.x()),
                     location.getBlockY() + (origin.y() - minPoint.y()),
