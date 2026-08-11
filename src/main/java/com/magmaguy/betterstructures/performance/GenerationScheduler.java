@@ -8,8 +8,10 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -23,6 +25,7 @@ import java.util.UUID;
 public final class GenerationScheduler {
 
     private static final Deque<GenerationJob> JOBS = new ArrayDeque<>();
+    private static final Set<Chunk> TICKETED_CHUNKS = new HashSet<>();
     private static boolean started = false;
     private static boolean pausedForLoad = false;
     private static int cooldownTicks = 0;
@@ -43,6 +46,10 @@ public final class GenerationScheduler {
     }
 
     public static void shutdown() {
+        for (Chunk chunk : TICKETED_CHUNKS) {
+            chunk.removePluginChunkTicket(MetadataHandler.PLUGIN);
+        }
+        TICKETED_CHUNKS.clear();
         JOBS.clear();
         pausedForLoad = false;
         cooldownTicks = 0;
@@ -61,6 +68,7 @@ public final class GenerationScheduler {
         // is much cheaper than forcing a synchronous reload later when the player has
         // already flown away from it.
         chunk.addPluginChunkTicket(MetadataHandler.PLUGIN);
+        TICKETED_CHUNKS.add(chunk);
         ChunkKey key = new ChunkKey(chunk.getWorld().getUID(), chunk.getX(), chunk.getZ());
 
         int totalJobs = jobs.size();
@@ -122,6 +130,7 @@ public final class GenerationScheduler {
                     @Override
                     public void run() {
                         job.chunk().removePluginChunkTicket(MetadataHandler.PLUGIN);
+                        TICKETED_CHUNKS.remove(job.chunk());
                     }
                 }.runTaskLater(MetadataHandler.PLUGIN, 200L);
             }
