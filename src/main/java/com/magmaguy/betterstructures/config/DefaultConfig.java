@@ -2,7 +2,6 @@ package com.magmaguy.betterstructures.config;
 
 import com.magmaguy.magmacore.config.ConfigurationEngine;
 import com.magmaguy.magmacore.config.ConfigurationFile;
-import com.magmaguy.magmacore.nightbreak.NightbreakPluginUpdater;
 import lombok.Getter;
 
 import java.util.List;
@@ -40,7 +39,21 @@ public class DefaultConfig extends ConfigurationFile {
     @Getter
     private static int modularChunkPastingSpeed = 10;
     @Getter
-    private static double percentageOfTickUsedForPasting = 0.2;
+    private static double percentageOfTickUsedForPasting = 0.08;
+    @Getter
+    private static double percentageOfTickUsedForPastePreparation = 0.04;
+    @Getter
+    private static boolean playerGenerationThrottling = true;
+    @Getter
+    private static double playerGenerationPauseMSPT = 42.0;
+    @Getter
+    private static double playerGenerationResumeMSPT = 32.0;
+    @Getter
+    private static double playerGenerationPauseTPS = 18.5;
+    @Getter
+    private static double playerGenerationResumeTPS = 19.5;
+    @Getter
+    private static int playerGenerationTicksBetweenJobs = 2;
     @Getter
     private static double percentageOfTickUsedForPregeneration = 0.1;
     @Getter
@@ -48,7 +61,6 @@ public class DefaultConfig extends ConfigurationFile {
     @Getter
     private static double pregenerationTPSResumeThreshold = 14.0;
 
-    // Adding getters for the new distance and offset variables
     @Getter
     private static int distanceSurface;
     @Getter
@@ -95,7 +107,6 @@ public class DefaultConfig extends ConfigurationFile {
         ConfigurationEngine.writeValue(setupDone, instance.file, instance.getFileConfiguration(), "setupDone");
     }
 
-
     public static boolean toggleWarnings() {
         newBuildingWarn = !newBuildingWarn;
         ConfigurationEngine.writeValue(newBuildingWarn, instance.file, instance.fileConfiguration, "warnAdminsAboutNewBuildings");
@@ -119,13 +130,47 @@ public class DefaultConfig extends ConfigurationFile {
         protectEliteMobsRegions = ConfigurationEngine.setBoolean(fileConfiguration, "protectEliteMobsRegions", true);
         setupDone = ConfigurationEngine.setBoolean(fileConfiguration, "setupDone", false);
         modularChunkPastingSpeed = ConfigurationEngine.setInt(fileConfiguration, "modularChunkPastingSpeed", 10);
-        percentageOfTickUsedForPasting = ConfigurationEngine.setDouble(List.of("Sets the maximum percentage of a tick that BetterStructures will use to paste builds, however many it maybe trying to generate.", "Ranges from 0.01 to 1, where 0.01 is 1% and 1 is 100%.", "Slower speeds will lower performance impact, but can lead to other problems such as builds suddenly popping in."),fileConfiguration, "percentageOfTickUsedForPasting", 0.2);
+        percentageOfTickUsedForPasting = ConfigurationEngine.setDouble(
+                List.of(
+                        "Maximum percentage of a 50ms tick used by the distributed block-paste stage.",
+                        "Albion performance default is 0.08 (about 4ms of a healthy tick).",
+                        "Existing configs with a higher value are preserved; lower this if resource-world exploration still causes spikes."),
+                fileConfiguration, "percentageOfTickUsedForPasting", 0.08);
+        percentageOfTickUsedForPastePreparation = ConfigurationEngine.setDouble(
+                List.of(
+                        "Maximum percentage of a 50ms tick used to prepare a schematic before block placement.",
+                        "This prevents the old all-at-once schematic walk from monopolizing a single tick.",
+                        "0.04 is about 2ms of work per tick."),
+                fileConfiguration, "percentageOfTickUsedForPastePreparation", 0.04);
+        playerGenerationThrottling = ConfigurationEngine.setBoolean(
+                fileConfiguration, "playerGenerationThrottling", true);
+        playerGenerationPauseMSPT = ConfigurationEngine.setDouble(
+                List.of(
+                        "Pause player-driven BetterStructures generation when average MSPT reaches this value.",
+                        "The chunk is kept queued and will be processed after the server recovers."),
+                fileConfiguration, "playerGenerationPauseMSPT", 42.0);
+        playerGenerationResumeMSPT = ConfigurationEngine.setDouble(
+                List.of(
+                        "Resume queued player-driven generation when average MSPT falls to or below this value.",
+                        "Keep this lower than playerGenerationPauseMSPT to avoid rapid pause/resume oscillation."),
+                fileConfiguration, "playerGenerationResumeMSPT", 32.0);
+        playerGenerationPauseTPS = ConfigurationEngine.setDouble(
+                List.of("Secondary TPS guard for player-driven structure generation."),
+                fileConfiguration, "playerGenerationPauseTPS", 18.5);
+        playerGenerationResumeTPS = ConfigurationEngine.setDouble(
+                List.of("TPS required before paused player-driven structure generation resumes."),
+                fileConfiguration, "playerGenerationResumeTPS", 19.5);
+        playerGenerationTicksBetweenJobs = ConfigurationEngine.setInt(
+                List.of(
+                        "Minimum ticks between expensive structure-fit jobs from ordinary player exploration.",
+                        "A value of 2 prevents several qualifying chunks from running their fitting passes in one tick."),
+                fileConfiguration, "playerGenerationTicksBetweenJobs", 2);
         percentageOfTickUsedForPregeneration = ConfigurationEngine.setDouble(List.of("Sets the maximum percentage of a tick that BetterStructures will use for world pregeneration when using the pregenerate command.", "Ranges from 0.01 to 1, where 0.01 is 1% and 1 is 100%.", "This controls how much of each server tick is dedicated to generating chunks, allowing you to balance generation speed with server performance.", "Lower values will generate chunks more slowly but reduce server lag, while higher values will generate faster but may impact server performance."), fileConfiguration, "percentageOfTickUsedForPregeneration", 0.1);
         pregenerationTPSPauseThreshold = ConfigurationEngine.setDouble(List.of("The TPS threshold at which chunk pregeneration will pause to protect server performance.", "When server TPS drops below this value, pregeneration will pause until TPS recovers.", "Default: 12.0"), fileConfiguration, "pregenerationTPSPauseThreshold", 12.0);
         pregenerationTPSResumeThreshold = ConfigurationEngine.setDouble(List.of("The TPS threshold at which chunk pregeneration will resume after being paused.", "Pregeneration will only resume when server TPS is at or above this value.", "Should be higher than the pause threshold to prevent rapid pause/resume cycles.", "Default: 14.0"), fileConfiguration, "pregenerationTPSResumeThreshold", 14.0);
-        autoDownloadPluginUpdates = NightbreakPluginUpdater.setAutoDownloadConfigDefault(fileConfiguration);
+        // Albion fork safety: never let the upstream Nightbreak updater replace this fork JAR.
+        autoDownloadPluginUpdates = false;
 
-        // Initialize the distances from configuration
         distanceSurface = ConfigurationEngine.setInt(
                 List.of(
                         "Sets the distance between structures in the surface of a world.",
@@ -153,11 +198,9 @@ public class DefaultConfig extends ConfigurationFile {
         distanceDungeon = ConfigurationEngine.setInt(
                 List.of(
                         "Sets the distance between dungeons.",
-                        "Shorter distances between dungeons will result in more dungeons overall."
-                ),
+                        "Shorter distances between dungeons will result in more dungeons overall."),
                 fileConfiguration, "distanceDungeonV2", 80);
 
-        // Initialize the maximum offsets from configuration
         maxOffsetSurface = ConfigurationEngine.setInt(
                 List.of(
                         "Used to tweak the randomization of the distance between structures in the surface of a world.",
