@@ -1,5 +1,6 @@
 package com.magmaguy.betterstructures.util;
 
+import com.fastasyncworldedit.core.extent.clipboard.CPUOptimizedClipboard;
 import com.magmaguy.magmacore.util.Logger;
 import com.sk89q.jnbt.CompoundTag;
 import com.sk89q.jnbt.ListTag;
@@ -8,7 +9,6 @@ import com.sk89q.worldedit.EditSession;
 import com.sk89q.worldedit.WorldEdit;
 import com.sk89q.worldedit.WorldEditException;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
-import com.sk89q.worldedit.extent.clipboard.BlockArrayClipboard;
 import com.sk89q.worldedit.extent.clipboard.Clipboard;
 import com.sk89q.worldedit.function.mask.BlockTypeMask;
 import com.sk89q.worldedit.function.operation.Operation;
@@ -159,13 +159,13 @@ public class WorldEditUtils {
     }
 
     /**
-     * Creates a real one-block WorldEdit/FAWE clipboard rather than implementing the
-     * Clipboard interface anonymously. This keeps the fork compatible as FAWE adds
-     * new extent methods while preserving NBT-rich BaseBlock data.
+     * Creates a real one-block FAWE clipboard without consulting FAWE's global
+     * clipboard-storage settings. This keeps NBT-rich one-block metadata pastes fast,
+     * deterministic, and unit-testable while avoiding a hand-written Clipboard shim.
      */
     public static Clipboard createSingleBlockClipboard(Location location, BaseBlock baseBlock, BlockState blockState) {
         CuboidRegion region = new CuboidRegion(BlockVector3.at(0, 0, 0), BlockVector3.at(0, 0, 0));
-        BlockArrayClipboard clipboard = new BlockArrayClipboard(region);
+        CPUOptimizedClipboard clipboard = new CPUOptimizedClipboard(region);
         clipboard.setOrigin(BlockVector3.at(0, 0, 0));
         try {
             clipboard.setBlock(BlockVector3.at(0, 0, 0), baseBlock);
