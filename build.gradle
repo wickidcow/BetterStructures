@@ -1,12 +1,11 @@
 plugins {
     id 'java-library'
     id 'idea'
-    id 'maven-publish'
     id "com.gradleup.shadow" version "9.0.0-beta12"
 }
 
 group = 'com.magmaguy'
-version = '2.6.3'
+version = '1.1.0'
 
 repositories {
     mavenCentral()
@@ -28,63 +27,55 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
     compileOnly 'org.projectlombok:lombok:1.18.30'
 
-    implementation (group: 'com.magmaguy', name: 'MagmaCore', version: '2.2.0-SNAPSHOT'){
+    implementation (group: 'com.magmaguy', name: 'MagmaCore', version: '2.2.0-SNAPSHOT') {
         changing = true
     }
     implementation group: 'org.bstats', name: 'bstats-bukkit', version: '2.2.1'
     implementation group: 'org.joml', name: 'joml', version: '1.10.8'
+
+    // Albion fork runtime baseline: Paper 1.21.11+ with FastAsyncWorldEdit.
+    compileOnly 'io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT'
+    compileOnly 'com.fastasyncworldedit:FastAsyncWorldEdit-Bukkit:2.14.3'
+
     compileOnly group: 'com.magmaguy', name: 'EliteMobs', version: '9.3.3-SNAPSHOT'
     compileOnly group: 'io.lumine', name: 'Mythic-Dist', version: '5.2.1'
     compileOnly group: 'io.lumine', name: 'MythicLib-dist', version: '1.5.2-SNAPSHOT'
     compileOnly group: 'net.Indyuce', name: 'MMOItems-API', version: '6.9.2-SNAPSHOT'
     compileOnly group: 'com.sk89q.worldguard', name: 'worldguard-bukkit', version: '7.0.7'
-    compileOnly group: 'com.sk89q.worldedit', name: 'worldedit-bukkit', version: '7.3.0'
-    compileOnly 'org.spigotmc:spigot-api:26.2-R0.1-SNAPSHOT'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testImplementation 'io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT'
     testImplementation 'org.mockbukkit.mockbukkit:mockbukkit-v1.21:4.110.0'
     testImplementation 'org.mockito:mockito-core:5.12.0'
-    testImplementation group: 'com.sk89q.worldedit', name: 'worldedit-bukkit', version: '7.3.0'
+    testImplementation 'com.sk89q.worldedit:worldedit-bukkit:7.3.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-//This allows any modules tagged as changing to be updated every time, which is extremely convenient for some of the shaded libs
 configurations.all {
     resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
 }
 
-artifacts { // task 'build' runs generates uberjar
+artifacts {
     archives shadowJar
 }
 
 jar {
-    archiveClassifier.set('min') // we want the Uberjar to be distributed, this is the minified version
+    archiveClassifier.set('min')
 }
 
 String packagePath = 'com.magmaguy.shaded'
 
-// Relocating a Package
 shadowJar {
     dependencies {
         relocate('org.bstats', packagePath + '.bstats')
     }
     relocate 'com.magmaguy.easyminecraftgoals', 'com.magmaguy.betterstructures.easyminecraftgoals'
-    // Relocate the shaded MagmaCore so its static singleton (and config-folder resolution via
-    // MagmaCore.getInstance().getRequestingPlugin()) is isolated per plugin. Without this, every
-    // plugin that ships MagmaCore unrelocated shares one instance/requestingPlugin, so their
-    // configs (e.g. setupDone) collide in a single data folder and never persist per-plugin.
     relocate 'com.magmaguy.magmacore', 'com.magmaguy.betterstructures.magmacore'
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     archiveClassifier.set(null)
-    archiveFileName.set(project.name + ".jar")
+    archiveFileName.set("BetterStructures-${project.version}.jar")
 }
 
-// --- Shared dist mirror -----------------------------------------------------
-// Copy the finished shaded jar into the top-level dist/ folder so the testbeds
-// and the release tool pick every build up from one place. Gated on MC_DIST_DIR
-// (or -PmcDistDir) so clones/CI that don't set it just build to build/libs and
-// no machine-specific path is ever committed.
 def mcDistDir = System.getenv('MC_DIST_DIR') ?: project.findProperty('mcDistDir')
 if (mcDistDir) {
     tasks.register('mirrorToDist', Copy) {
@@ -94,8 +85,9 @@ if (mcDistDir) {
     tasks.named('shadowJar') { finalizedBy('mirrorToDist') }
 }
 
-tasks.withType(JavaCompile) {
+tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    options.release = 21
 }
 
 test {
@@ -110,41 +102,10 @@ ext {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21) // or your target version
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
 processResources {
     filter org.apache.tools.ant.filters.ReplaceTokens, tokens: resourceTokens
-}
-
-publishing {
-    repositories {
-        maven {
-            name = "BetterStructures"
-            url = "https://repo.magmaguy.com/releases"
-            credentials {
-                username = project.hasProperty('ossrhUsername') ? ossrhUsername : "Unknown user"
-                password = project.hasProperty('ossrhPassword') ? ossrhPassword : "Unknown password"
-            }
-        }
-    }
-
-    publications {
-        mavenJava(MavenPublication) {
-            pom {
-                groupId = 'com.magmaguy'
-                name = 'betterstructures'
-                description = 'BetterStructures repo'
-                url = 'https://magmaguy.com/'
-                from components.java
-                licenses {
-                    license {
-                        name = 'GPLV3'
-                        url = 'https://www.gnu.org/licenses/gpl-3.0.en.html'
-                    }
-                }
-            }
-        }
-    }
 }
