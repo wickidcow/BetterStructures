@@ -24,6 +24,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
@@ -51,7 +52,6 @@ public class FitAnything {
     @Getter
     protected Vector schematicOffset;
     protected int verticalOffset = 0;
-    //At 10% it is assumed a fit is so bad it's better just to skip
     protected double highestScore = 10;
     @Getter
     protected Location location = null;
@@ -102,8 +102,6 @@ public class FitAnything {
         if (buildPlaceEvent.isCancelled()) return;
 
         FitAnything fitAnything = this;
-
-        // Set pedestal material before the paste so bedrock blocks get replaced correctly
         assignPedestalMaterial(location);
         if (pedestalMaterial == null)
             switch (location.getWorld().getEnvironment()) {
@@ -117,10 +115,7 @@ public class FitAnything {
                     pedestalMaterial = Material.STONE;
             }
 
-        // Create a function to provide pedestal material
         Function<Boolean, Material> pedestalMaterialProvider = this::getPedestalMaterial;
-
-        // Paste the schematic with the moved logic
         Schematic.pasteSchematic(
                 schematicClipboard,
                 location,
@@ -172,7 +167,7 @@ public class FitAnything {
                     Logger.warn("Failed to correctly spawn entities!");
                     exception.printStackTrace();
                 }
-                try{
+                try {
                     spawnProps(fitAnything.schematicClipboard);
                 } catch (Exception exception) {
                     Logger.warn("Failed to correctly spawn props!");
@@ -183,7 +178,6 @@ public class FitAnything {
     }
 
     private void spawnProps(Clipboard clipboard) {
-        // Don't add schematicOffset here - let pasteArmorStandsOnlyFromTransformed handle the alignment
         WorldEditUtils.pasteArmorStandsOnlyFromTransformed(clipboard, location.clone().add(schematicOffset));
     }
 
@@ -192,27 +186,39 @@ public class FitAnything {
         pedestalMaterial = schematicContainer.getSchematicConfigField().getPedestalMaterial();
         Location lowestCorner = location.clone().add(schematicOffset);
 
-        int maxSurfaceHeightScan = 20;
+        int sizeX = schematicClipboard.getDimensions().x();
+        int sizeY = schematicClipboard.getDimensions().y();
+        int sizeZ = schematicClipboard.getDimensions().z();
+        int baseX = lowestCorner.getBlockX();
+        int baseY = lowestCorner.getBlockY();
+        int baseZ = lowestCorner.getBlockZ();
+        World world = lowestCorner.getWorld();
 
-        //get underground pedestal blocks
-        for (int x = 0; x < schematicClipboard.getDimensions().x(); x++)
-            for (int z = 0; z < schematicClipboard.getDimensions().z(); z++)
-                for (int y = 0; y < schematicClipboard.getDimensions().y(); y++) {
-                    Block groundBlock = lowestCorner.clone().add(new Vector(x, y, z)).getBlock();
+        // Cap synchronous world reads on large schematics. Small structures retain
+        // the original exact step=1 scan; large structures use a representative sample.
+        int xStep = Math.max(1, Math.ceilDiv(sizeX, 24));
+        int yStep = Math.max(1, Math.ceilDiv(sizeY, 12));
+        int zStep = Math.max(1, Math.ceilDiv(sizeZ, 24));
+
+        for (int x = 0; x < sizeX; x += xStep)
+            for (int z = 0; z < sizeZ; z += zStep)
+                for (int y = 0; y < sizeY; y += yStep) {
+                    Block groundBlock = world.getBlockAt(baseX + x, baseY + y, baseZ + z);
                     Block aboveBlock = groundBlock.getRelative(BlockFace.UP);
-
-                    if (aboveBlock.getType().isSolid() && groundBlock.getType().isSolid() && !SurfaceMaterials.ignorable(groundBlock.getType()))
+                    if (aboveBlock.getType().isSolid()
+                            && groundBlock.getType().isSolid()
+                            && !SurfaceMaterials.ignorable(groundBlock.getType())) {
                         undergroundPedestalMaterials.merge(groundBlock.getType(), 1, Integer::sum);
+                    }
                 }
 
-        //get above ground pedestal blocks, if any
-        for (int x = 0; x < schematicClipboard.getDimensions().x(); x++)
-            for (int z = 0; z < schematicClipboard.getDimensions().z(); z++) {
-                boolean scanUp = lowestCorner.clone().add(new Vector(x, schematicClipboard.getDimensions().y(), z)).getBlock().getType().isSolid();
+        int maxSurfaceHeightScan = 20;
+        for (int x = 0; x < sizeX; x += xStep)
+            for (int z = 0; z < sizeZ; z += zStep) {
+                boolean scanUp = world.getBlockAt(baseX + x, baseY + sizeY, baseZ + z).getType().isSolid();
                 for (int y = 0; y < maxSurfaceHeightScan; y++) {
-                    Block groundBlock = lowestCorner.clone().add(new Vector(x, scanUp ? y : -y, z)).getBlock();
+                    Block groundBlock = world.getBlockAt(baseX + x, baseY + (scanUp ? y : -y), baseZ + z);
                     Block aboveBlock = groundBlock.getRelative(BlockFace.UP);
-
                     if (!aboveBlock.getType().isSolid() && groundBlock.getType().isSolid()) {
                         surfacePedestalMaterials.merge(groundBlock.getType(), 1, Integer::sum);
                         break;
@@ -232,22 +238,13 @@ public class FitAnything {
     }
 
     public Material getRandomMaterialBasedOnWeight(HashMap<Material, Integer> weightedMaterials) {
-        // Calculate the total weight
         int totalWeight = weightedMaterials.values().stream().mapToInt(Integer::intValue).sum();
-
-        // Generate a random number in the range of 0 (inclusive) to totalWeight (exclusive)
         int randomNumber = ThreadLocalRandom.current().nextInt(totalWeight);
-
-        // Iterate through the materials and pick one based on the random number
         int cumulativeWeight = 0;
         for (Map.Entry<Material, Integer> entry : weightedMaterials.entrySet()) {
             cumulativeWeight += entry.getValue();
-            if (randomNumber < cumulativeWeight) {
-                return entry.getKey();
-            }
+            if (randomNumber < cumulativeWeight) return entry.getKey();
         }
-
-        // Fallback return, should not occur if the map is not empty and weights are positive
         throw new IllegalStateException("Weighted random selection failed.");
     }
 
@@ -256,17 +253,13 @@ public class FitAnything {
         Location lowestCorner = location.clone().add(schematicOffset);
         for (int x = 0; x < schematicClipboard.getDimensions().x(); x++)
             for (int z = 0; z < schematicClipboard.getDimensions().z(); z++) {
-                //Only add pedestals for areas with a solid floor, some schematics can have rounded air edges to better fit terrain
                 Block groundBlock = lowestCorner.clone().add(new Vector(x, 0, z)).getBlock();
                 if (groundBlock.getType().isAir()) continue;
                 for (int y = -1; y > -11; y--) {
                     Block block = lowestCorner.clone().add(new Vector(x, y, z)).getBlock();
                     if (SurfaceMaterials.ignorable(block.getType()))
-                        block.setType(getPedestalMaterial(!block.getRelative(BlockFace.UP).getType().isSolid()));
-                    else {
-                        //Pedestal only fills until it hits the first solid block
-                        break;
-                    }
+                        block.setType(getPedestalMaterial(!block.getRelative(BlockFace.UP).getType().isSolid()), false);
+                    else break;
                 }
             }
     }
@@ -282,7 +275,7 @@ public class FitAnything {
                     Block block = highestCorner.clone().add(new Vector(x, y, z)).getBlock();
                     if (SurfaceMaterials.ignorable(block.getType()) && !block.getType().isAir()) {
                         detectedTreeElement = true;
-                        block.setType(Material.AIR);
+                        block.setType(Material.AIR, false);
                     }
                 }
             }
@@ -311,24 +304,19 @@ public class FitAnything {
                 contents = schematicContainer.getBarrelContents();
                 String schematicBarrelFile = schematicContainer.getSchematicConfigField().getBarrelTreasureFilename();
                 treasureFilename = (schematicBarrelFile != null && !schematicBarrelFile.isEmpty())
-                        ? schematicBarrelFile
-                        : gen.getBarrelTreasureFilename();
+                        ? schematicBarrelFile : gen.getBarrelTreasureFilename();
             } else {
                 contents = schematicContainer.getChestContents();
                 String schematicTreasureFile = schematicContainer.getSchematicConfigField().getTreasureFile();
                 treasureFilename = (schematicTreasureFile != null && !schematicTreasureFile.isEmpty())
-                        ? schematicTreasureFile
-                        : gen.getTreasureFilename();
+                        ? schematicTreasureFile : gen.getTreasureFilename();
             }
 
             if (contents == null) continue;
             contents.rollChestContents(container);
-
             ChestFillEvent chestFillEvent = new ChestFillEvent(container, treasureFilename);
             Bukkit.getServer().getPluginManager().callEvent(chestFillEvent);
-            if (!chestFillEvent.isCancelled()) {
-                container.update(true);
-            }
+            if (!chestFillEvent.isCancelled()) container.update(true);
         }
     }
 
@@ -336,51 +324,40 @@ public class FitAnything {
         for (Vector entityPosition : schematicContainer.getVanillaSpawns().keySet()) {
             Location signLocation = LocationProjector.project(location, schematicOffset, entityPosition).clone();
             signLocation.getBlock().setType(Material.AIR);
-            //If mobs spawn in corners they might choke on adjacent walls
             signLocation.add(new Vector(0.5, 0, 0.5));
-            //I think FAWE is messing with this
             signLocation.getChunk().load();
             Entity entity = signLocation.getWorld().spawnEntity(signLocation, schematicContainer.getVanillaSpawns().get(entityPosition));
             entity.setPersistent(true);
-            if (entity instanceof LivingEntity) {
-                ((LivingEntity) entity).setRemoveWhenFarAway(false);
-            }
+            if (entity instanceof LivingEntity) ((LivingEntity) entity).setRemoveWhenFarAway(false);
 
-            if (!VersionChecker.serverVersionOlderThan(21, 0) &&
-                    entity.getType().equals(EntityType.END_CRYSTAL)) {
+            if (!VersionChecker.serverVersionOlderThan(21, 0) && entity.getType().equals(EntityType.END_CRYSTAL)) {
                 EnderCrystal enderCrystal = (EnderCrystal) entity;
                 enderCrystal.setShowingBottom(false);
             }
         }
+
         for (Vector elitePosition : schematicContainer.getEliteMobsSpawns().keySet()) {
             Location eliteLocation = LocationProjector.project(location, schematicOffset, elitePosition).clone();
             eliteLocation.getBlock().setType(Material.AIR);
             eliteLocation.add(new Vector(0.5, 0, 0.5));
             String bossFilename = schematicContainer.getEliteMobsSpawns().get(elitePosition);
-            //If the spawn fails then don't continue
             if (!EliteMobs.Spawn(eliteLocation, bossFilename)) return;
             Location lowestCorner = location.clone().add(schematicOffset);
             Location highestCorner = lowestCorner.clone().add(new Vector(schematicClipboard.getRegion().getWidth() - 1, schematicClipboard.getRegion().getHeight(), schematicClipboard.getRegion().getLength() - 1));
-            if (DefaultConfig.isProtectEliteMobsRegions() &&
-                    Bukkit.getPluginManager().getPlugin("WorldGuard") != null &&
-                    Bukkit.getPluginManager().getPlugin("EliteMobs") != null) {
+            if (DefaultConfig.isProtectEliteMobsRegions()
+                    && Bukkit.getPluginManager().getPlugin("WorldGuard") != null
+                    && Bukkit.getPluginManager().getPlugin("EliteMobs") != null) {
                 WorldGuard.Protect(lowestCorner, highestCorner, bossFilename, eliteLocation);
-            } else {
-                if (!worldGuardWarn) {
-                    worldGuardWarn = true;
-                    Logger.warn("You are not using WorldGuard, so BetterStructures could not protect a boss arena! Using WorldGuard is recommended to guarantee a fair combat experience.");
-                }
+            } else if (!worldGuardWarn) {
+                worldGuardWarn = true;
+                Logger.warn("You are not using WorldGuard, so BetterStructures could not protect a boss arena! Using WorldGuard is recommended to guarantee a fair combat experience.");
             }
         }
 
-        // carm start - Support for MythicMobs
         for (Map.Entry<Vector, String> entry : schematicContainer.getMythicMobsSpawns().entrySet()) {
             Location mobLocation = LocationProjector.project(location, schematicOffset, entry.getKey()).clone();
             mobLocation.getBlock().setType(Material.AIR);
-
-            //If the spawn fails then don't continue
             if (!MythicMobs.Spawn(mobLocation, entry.getValue())) return;
         }
-        // carm end - Support for MythicMobs
     }
 }
