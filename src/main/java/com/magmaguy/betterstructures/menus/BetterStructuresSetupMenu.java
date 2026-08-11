@@ -1,19 +1,13 @@
 package com.magmaguy.betterstructures.menus;
 
 import com.magmaguy.betterstructures.MetadataHandler;
-import com.magmaguy.betterstructures.BetterStructures;
 import com.magmaguy.betterstructures.config.contentpackages.ContentPackageConfigFields;
 import com.magmaguy.betterstructures.content.BSPackage;
 import com.magmaguy.betterstructures.content.BSPackageRefresher;
 import com.magmaguy.magmacore.menus.MenuButton;
 import com.magmaguy.magmacore.menus.SetupMenuBuilder;
 import com.magmaguy.magmacore.nightbreak.DownloadAllContentPackage;
-import com.magmaguy.magmacore.nightbreak.NightbreakAccount;
-import com.magmaguy.magmacore.nightbreak.NightbreakSetupControls;
 import com.magmaguy.magmacore.util.ChatColorConverter;
-import com.magmaguy.magmacore.util.ItemStackGenerator;
-import com.magmaguy.magmacore.util.Logger;
-import com.magmaguy.magmacore.util.SpigotMessage;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -37,23 +31,36 @@ public class BetterStructuresSetupMenu {
                 .collect(Collectors.toList());
         BSPackageRefresher.refreshContentAndAccess();
 
-        MenuButton infoButton = NightbreakSetupControls.setupInfoButton(
-                BetterStructures.NIGHTBREAK_PLUGIN_SPEC,
-                "https://nightbreak.io/plugin/betterstructures/#setup");
+        // The published MagmaCore snapshot used by BetterStructures no longer matches
+        // the newer NightbreakSetupControls helper. Keep the useful setup/package menu
+        // while avoiding that moving convenience API in the Albion fork.
+        MenuButton infoButton = new MenuButton(
+                Material.BOOK,
+                ChatColor.GREEN + "BetterStructures",
+                List.of(
+                        ChatColor.GRAY + "Original plugin by MagmaGuy",
+                        ChatColor.GRAY + "AlbionMC performance fork",
+                        ChatColor.YELLOW + "Content packages can be managed here.")) {
+            @Override
+            public void onClick(Player clickingPlayer) {
+                clickingPlayer.sendMessage(ChatColor.GREEN + "BetterStructures Performance / Albion");
+                clickingPlayer.sendMessage(ChatColor.GRAY + "Original BetterStructures created by MagmaGuy.");
+            }
+        };
 
-        SetupMenuBuilder builder = new SetupMenuBuilder((JavaPlugin) MetadataHandler.PLUGIN, player)
+        new SetupMenuBuilder((JavaPlugin) MetadataHandler.PLUGIN, player)
                 .title("Setup menu")
                 .infoButton(infoButton)
                 .packages(bsPackages)
-                .appendPackage(new DownloadAllContentPackage<>(() -> new ArrayList<>(BSPackage.getBsPackages().values()),
+                .appendPackage(new DownloadAllContentPackage<>(
+                        () -> new ArrayList<>(BSPackage.getBsPackages().values()),
                         "BetterStructures",
                         "https://nightbreak.io/plugin/betterstructures/",
                         "bs downloadall"))
                 .addFilter(Material.GRASS_BLOCK, "Structure Packs",
                         (Predicate<BSPackage>) BetterStructuresSetupMenu::filterStructures)
                 .addFilter(Material.DEEPSLATE_BRICKS, "Module Packs",
-                        (Predicate<BSPackage>) BetterStructuresSetupMenu::filterModules);
-        NightbreakSetupControls.prependStandardControls(builder, (JavaPlugin) MetadataHandler.PLUGIN, BetterStructures.NIGHTBREAK_PLUGIN_SPEC)
+                        (Predicate<BSPackage>) BetterStructuresSetupMenu::filterModules)
                 .open();
     }
 
