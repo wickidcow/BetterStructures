@@ -28,11 +28,8 @@ import com.magmaguy.magmacore.dlc.ConfigurationImporter;
 import com.magmaguy.magmacore.initialization.PluginInitializationConfig;
 import com.magmaguy.magmacore.initialization.PluginInitializationContext;
 import com.magmaguy.magmacore.initialization.PluginInitializationState;
-import com.magmaguy.magmacore.nightbreak.NightbreakDownloadContentCommand;
-import com.magmaguy.magmacore.nightbreak.NightbreakDownloadEverythingCommand;
 import com.magmaguy.magmacore.nightbreak.NightbreakPluginSpec;
 import com.magmaguy.magmacore.nightbreak.NightbreakPluginStateRegistry;
-import com.magmaguy.magmacore.nightbreak.NightbreakRecommendedPluginsCommand;
 import com.magmaguy.magmacore.util.Logger;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.Bukkit;
@@ -41,7 +38,6 @@ import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
-import java.util.ArrayList;
 
 public final class BetterStructures extends JavaPlugin {
     public static final NightbreakPluginSpec NIGHTBREAK_PLUGIN_SPEC = new NightbreakPluginSpec(
@@ -177,21 +173,10 @@ public final class BetterStructures extends JavaPlugin {
         commandManager.registerCommand(new VersionCommand());
         commandManager.registerCommand(new SetupCommand());
         commandManager.registerCommand(new FirstTimeSetupCommand());
-        commandManager.registerCommand(new NightbreakRecommendedPluginsCommand(this, NIGHTBREAK_PLUGIN_SPEC));
-        commandManager.registerCommand(new NightbreakDownloadEverythingCommand<>(this,
-                NIGHTBREAK_PLUGIN_SPEC,
-                () -> new ArrayList<>(BSPackage.getBsPackages().values()),
-                ReloadCommand::reload));
-        commandManager.registerCommand(new NightbreakDownloadContentCommand<>(this,
-                NIGHTBREAK_PLUGIN_SPEC,
-                () -> new ArrayList<>(BSPackage.getBsPackages().values()),
-                ReloadCommand::reload,
-                false));
-        commandManager.registerCommand(new NightbreakDownloadContentCommand<>(this,
-                NIGHTBREAK_PLUGIN_SPEC,
-                () -> new ArrayList<>(BSPackage.getBsPackages().values()),
-                ReloadCommand::reload,
-                true));
+        // Albion fork intentionally omits Nightbreak plugin/content-download convenience
+        // commands whose API is not present in the published MagmaCore snapshot. Existing
+        // structure packs/configuration continue to load normally, and setup package
+        // browsing remains available through the BetterStructures setup menu.
         commandManager.registerCommand(new GenerateModulesCommand());
         commandManager.registerCommand(new BetterStructuresCommand());
 
