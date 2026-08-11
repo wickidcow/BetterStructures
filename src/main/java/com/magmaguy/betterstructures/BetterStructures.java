@@ -16,9 +16,11 @@ import com.magmaguy.betterstructures.listeners.FirstTimeSetupWarner;
 import com.magmaguy.betterstructures.listeners.NewChunkLoadEvent;
 import com.magmaguy.betterstructures.modules.ModulesContainer;
 import com.magmaguy.betterstructures.modules.WFCGenerator;
+import com.magmaguy.betterstructures.performance.GenerationScheduler;
 import com.magmaguy.betterstructures.schematics.SchematicContainer;
 import com.magmaguy.betterstructures.thirdparty.EliteMobs;
 import com.magmaguy.betterstructures.thirdparty.WorldGuard;
+import com.magmaguy.betterstructures.worldedit.Schematic;
 import com.magmaguy.easyminecraftgoals.NMSManager;
 import com.magmaguy.magmacore.MagmaCore;
 import com.magmaguy.magmacore.command.CommandManager;
@@ -28,9 +30,7 @@ import com.magmaguy.magmacore.initialization.PluginInitializationContext;
 import com.magmaguy.magmacore.initialization.PluginInitializationState;
 import com.magmaguy.magmacore.nightbreak.NightbreakDownloadContentCommand;
 import com.magmaguy.magmacore.nightbreak.NightbreakDownloadEverythingCommand;
-import com.magmaguy.magmacore.nightbreak.NightbreakDownloadPluginUpdateCommand;
 import com.magmaguy.magmacore.nightbreak.NightbreakPluginSpec;
-import com.magmaguy.magmacore.nightbreak.NightbreakPluginUpdater;
 import com.magmaguy.magmacore.nightbreak.NightbreakPluginStateRegistry;
 import com.magmaguy.magmacore.nightbreak.NightbreakRecommendedPluginsCommand;
 import com.magmaguy.magmacore.util.Logger;
@@ -61,7 +61,6 @@ public final class BetterStructures extends JavaPlugin {
         Bukkit.getLogger().info("  / __  / _ \\/ __/ __/ _ \\/ ___/\\__ \\/ __/ ___/ / / / ___/ __/ / / / ___/ _ \\/ ___/");
         Bukkit.getLogger().info(" / /_/ /  __/ /_/ /_/  __/ /   ___/ / /_/ /  / /_/ / /__/ /_/ /_/ / /  /  __(__  ) ");
         Bukkit.getLogger().info("/_____/\\___/\\__/\\__/\\___/_/   /____/\\__/_/   \\__,_/\\___/\\__/\\__,_/_/   \\___/____/");
-        // Plugin startup logic
         Bukkit.getLogger().info("[BetterStructures] Initialized version " + this.getDescription().getVersion() + "!");
         try {
             this.getConfig().save("config.yml");
@@ -76,7 +75,6 @@ public final class BetterStructures extends JavaPlugin {
                 this::syncInitialization,
                 () -> {
                     Logger.info("BetterStructures fully initialized!");
-                    NightbreakPluginUpdater.autoDownloadPluginUpdateIfEnabled(this, NIGHTBREAK_PLUGIN_SPEC);
                     CommandSender pendingReloadSender = NightbreakPluginStateRegistry.consumePendingReloadSender(this);
                     if (pendingReloadSender == null) {
                         pendingReloadSender = MetadataHandler.pendingReloadSender;
@@ -110,12 +108,15 @@ public final class BetterStructures extends JavaPlugin {
     public void onDisable() {
         MagmaCore.requestInitializationShutdown(this);
         if (MagmaCore.getInitializationState(this.getName()) == PluginInitializationState.INITIALIZING) {
+            GenerationScheduler.shutdown();
+            Schematic.shutdown();
             Bukkit.getServer().getScheduler().cancelTasks(MetadataHandler.PLUGIN);
             MagmaCore.shutdown(this);
             Bukkit.getLogger().info("[BetterStructures] Shutdown during initialization.");
             return;
         }
-        // Plugin shutdown logic
+        GenerationScheduler.shutdown();
+        Schematic.shutdown();
         SchematicContainer.shutdown();
         Bukkit.getServer().getScheduler().cancelTasks(MetadataHandler.PLUGIN);
         MagmaCore.shutdown(this);
@@ -177,7 +178,6 @@ public final class BetterStructures extends JavaPlugin {
         commandManager.registerCommand(new SetupCommand());
         commandManager.registerCommand(new FirstTimeSetupCommand());
         commandManager.registerCommand(new NightbreakRecommendedPluginsCommand(this, NIGHTBREAK_PLUGIN_SPEC));
-        commandManager.registerCommand(new NightbreakDownloadPluginUpdateCommand(this, NIGHTBREAK_PLUGIN_SPEC));
         commandManager.registerCommand(new NightbreakDownloadEverythingCommand<>(this,
                 NIGHTBREAK_PLUGIN_SPEC,
                 () -> new ArrayList<>(BSPackage.getBsPackages().values()),
@@ -195,9 +195,6 @@ public final class BetterStructures extends JavaPlugin {
         commandManager.registerCommand(new GenerateModulesCommand());
         commandManager.registerCommand(new BetterStructuresCommand());
 
-        initializationContext.step("Version Check");
-        MagmaCore.checkVersionUpdate("103241", "https://nightbreak.io/plugin/betterstructures/");
-
         initializationContext.step("WorldGuard Integration");
         if (Bukkit.getPluginManager().getPlugin("WorldGuard") != null &&
                 Bukkit.getPluginManager().getPlugin("EliteMobs") != null) {
@@ -209,6 +206,8 @@ public final class BetterStructures extends JavaPlugin {
     }
 
     public void reloadImportedContent(CommandSender commandSender) {
+        GenerationScheduler.shutdown();
+        Schematic.shutdown();
         SchematicContainer.shutdown();
         Bukkit.getServer().getScheduler().cancelTasks(MetadataHandler.PLUGIN);
         BSPackage.shutdown();
@@ -230,6 +229,7 @@ public final class BetterStructures extends JavaPlugin {
                 ComponentsConfigFolder.initialize();
 
                 Bukkit.getScheduler().runTask(this, () -> {
+                    GenerationScheduler.start();
                     if (commandSender != null) {
                         Logger.sendMessage(commandSender, "Reloaded BetterStructures content.");
                     }
@@ -238,6 +238,7 @@ public final class BetterStructures extends JavaPlugin {
                 Logger.warn("Failed to reload BetterStructures content asynchronously.");
                 exception.printStackTrace();
                 Bukkit.getScheduler().runTask(this, () -> {
+                    GenerationScheduler.start();
                     if (commandSender != null) {
                         Logger.sendMessage(commandSender, "&cFailed to reload BetterStructures content. Check the console.");
                     }
