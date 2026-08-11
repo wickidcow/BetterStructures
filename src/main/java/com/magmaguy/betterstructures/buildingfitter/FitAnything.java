@@ -102,24 +102,32 @@ public class FitAnything {
         if (buildPlaceEvent.isCancelled()) return;
 
         FitAnything fitAnything = this;
-        assignPedestalMaterial(location);
-        if (pedestalMaterial == null)
-            switch (location.getWorld().getEnvironment()) {
-                case NETHER:
-                    pedestalMaterial = Material.NETHERRACK;
-                    break;
-                case THE_END:
-                    pedestalMaterial = Material.END_STONE;
-                    break;
-                default:
-                    pedestalMaterial = Material.STONE;
-            }
+
+        // Wait until Schematic has asynchronously prepared/ticketed every chunk touched
+        // by the build before doing Bukkit world reads for pedestal material selection.
+        // The callback is invoked on the primary thread immediately before the async FAWE
+        // edit starts.
+        Runnable prePasteCallback = () -> {
+            assignPedestalMaterial(location);
+            if (pedestalMaterial == null)
+                switch (location.getWorld().getEnvironment()) {
+                    case NETHER:
+                        pedestalMaterial = Material.NETHERRACK;
+                        break;
+                    case THE_END:
+                        pedestalMaterial = Material.END_STONE;
+                        break;
+                    default:
+                        pedestalMaterial = Material.STONE;
+                }
+        };
 
         Function<Boolean, Material> pedestalMaterialProvider = this::getPedestalMaterial;
         Schematic.pasteSchematic(
                 schematicClipboard,
                 location,
                 schematicOffset,
+                prePasteCallback,
                 pedestalMaterialProvider,
                 onPasteComplete(fitAnything, location)
         );
