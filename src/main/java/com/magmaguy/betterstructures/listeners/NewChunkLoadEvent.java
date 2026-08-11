@@ -14,6 +14,7 @@ import com.magmaguy.betterstructures.config.modulegenerators.ModuleGeneratorsCon
 import com.magmaguy.betterstructures.modules.WFCGenerator;
 import com.magmaguy.betterstructures.performance.GenerationScheduler;
 import com.magmaguy.betterstructures.schematics.SchematicContainer;
+import com.magmaguy.betterstructures.worldedit.Schematic;
 import org.bukkit.Chunk;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -40,6 +41,10 @@ public class NewChunkLoadEvent implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onChunkLoad(ChunkLoadEvent event) {
         if (!event.isNewChunk()) return;
+        // BetterStructures may need to generate neighboring chunks before an already
+        // selected structure can be pasted. Those internal loads must never recursively
+        // qualify for more BetterStructures generation.
+        if (Schematic.isInternalChunkLoad(event.getChunk())) return;
         if (!ValidWorldsConfig.isValidWorld(event.getWorld())) return;
 
         Chunk chunk = event.getChunk();
