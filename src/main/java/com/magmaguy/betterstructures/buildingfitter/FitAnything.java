@@ -18,7 +18,10 @@ import com.magmaguy.betterstructures.worldedit.Schematic;
 import com.magmaguy.magmacore.util.Logger;
 import com.magmaguy.magmacore.util.SpigotMessage;
 import com.magmaguy.magmacore.util.VersionChecker;
+import com.sk89q.worldedit.EditSession;
+import com.sk89q.worldedit.bukkit.BukkitAdapter;
 import com.sk89q.worldedit.extent.clipboard.Clipboard;
+import com.sk89q.worldedit.math.BlockVector3;
 import lombok.Getter;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
@@ -29,7 +32,6 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
 import org.bukkit.entity.*;
-import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
 import java.util.HashMap;
@@ -103,10 +105,8 @@ public class FitAnything {
 
         FitAnything fitAnything = this;
 
-        // Wait until Schematic has asynchronously prepared/ticketed every chunk touched
-        // by the build before doing Bukkit world reads for pedestal material selection.
-        // The callback is invoked on the primary thread immediately before the async FAWE
-        // edit starts.
+        // Terrain sampling is a Bukkit read and therefore remains on the primary thread,
+        // after every structure chunk has been prepared/ticketed by Schematic.
         Runnable prePasteCallback = () -> {
             assignPedestalMaterial(location);
             if (pedestalMaterial == null)
@@ -123,70 +123,66 @@ public class FitAnything {
         };
 
         Function<Boolean, Material> pedestalMaterialProvider = this::getPedestalMaterial;
+        Schematic.FawePostProcessor fawePostProcessor = this::applyFawePostProcessing;
+
         Schematic.pasteSchematic(
                 schematicClipboard,
                 location,
                 schematicOffset,
                 prePasteCallback,
                 pedestalMaterialProvider,
+                fawePostProcessor,
                 onPasteComplete(fitAnything, location)
         );
     }
 
-    private BukkitRunnable onPasteComplete(FitAnything fitAnything, Location location) {
-        return new BukkitRunnable() {
-            @Override
-            public void run() {
-                if (DefaultConfig.isNewBuildingWarn()) {
-                    String structureTypeString = fitAnything.structureType.toString().toLowerCase(Locale.ROOT).replace("_", " ");
-                    for (Player player : Bukkit.getOnlinePlayers())
-                        if (player.hasPermission("betterstructures.warn"))
-                            player.spigot().sendMessage(
-                                    SpigotMessage.commandHoverMessage("[BetterStructures] New " + structureTypeString + " building generated! Click to teleport. Do \"/betterstructures silent\" to stop getting warnings!",
-                                            "Click to teleport to " + location.getWorld().getName() + ", " + location.getBlockX() + ", " + location.getBlockY() + ", " + location.getBlockZ() + "\n Schem name: " + schematicContainer.getConfigFilename(),
-                                            "/betterstructures teleport " + location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ())
-                            );
-                }
-
-                if (!(fitAnything instanceof FitAirBuilding)) {
-                    try {
-                        addPedestal(location);
-                    } catch (Exception exception) {
-                        Logger.warn("Failed to correctly assign pedestal material!");
-                        exception.printStackTrace();
-                    }
-                    try {
-                        if (fitAnything instanceof FitSurfaceBuilding)
-                            clearTrees(location);
-                    } catch (Exception exception) {
-                        Logger.warn("Failed to correctly clear trees!");
-                        exception.printStackTrace();
-                    }
-                }
-                try {
-                    fillChests();
-                } catch (Exception exception) {
-                    Logger.warn("Failed to correctly fill chests!");
-                    exception.printStackTrace();
-                }
-                try {
-                    spawnEntities();
-                } catch (Exception exception) {
-                    Logger.warn("Failed to correctly spawn entities!");
-                    exception.printStackTrace();
-                }
-                try {
-                    spawnProps(fitAnything.schematicClipboard);
-                } catch (Exception exception) {
-                    Logger.warn("Failed to correctly spawn props!");
-                    exception.printStackTrace();
-                }
+    /**
+     * Runs after the schematic blocks are in the same async FAWE EditSession, while the
+     * structure's chunks are still ticketed. No Bukkit block mutations are allowed here.
+     */
+    private void applyFawePostProcessing(EditSession editSession, Location adjustedLocation) throws Exception {
+        if (!(this instanceof FitAirBuilding)) {
+            if (!(this instanceof FitLiquidBuilding)) {
+                addPedestalFawe(editSession, adjustedLocation);
             }
-        };
+            if (this instanceof FitSurfaceBuilding) {
+                clearTreesFawe(editSession, adjustedLocation);
+            }
+        }
+
+        clearEntityMarkersFawe(editSession, adjustedLocation);
+
+        // Entity clipboard placement is also a FAWE operation and no longer consumes the
+        // primary-thread completion phase.
+        WorldEditUtils.pasteArmorStandsOnlyFromTransformed(schematicClipboard, adjustedLocation);
     }
 
-    private void spawnProps(Clipboard clipboard) {
-        WorldEditUtils.pasteArmorStandsOnlyFromTransformed(clipboard, location.clone().add(schematicOffset));
+    private Runnable onPasteComplete(FitAnything fitAnything, Location location) {
+        return () -> {
+            if (DefaultConfig.isNewBuildingWarn()) {
+                String structureTypeString = fitAnything.structureType.toString().toLowerCase(Locale.ROOT).replace("_", " ");
+                for (Player player : Bukkit.getOnlinePlayers())
+                    if (player.hasPermission("betterstructures.warn"))
+                        player.spigot().sendMessage(
+                                SpigotMessage.commandHoverMessage("[BetterStructures] New " + structureTypeString + " building generated! Click to teleport. Do \"/betterstructures silent\" to stop getting warnings!",
+                                        "Click to teleport to " + location.getWorld().getName() + ", " + location.getBlockX() + ", " + location.getBlockY() + ", " + location.getBlockZ() + "\n Schem name: " + schematicContainer.getConfigFilename(),
+                                        "/betterstructures teleport " + location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ())
+                        );
+            }
+
+            try {
+                fillChests();
+            } catch (Exception exception) {
+                Logger.warn("Failed to correctly fill chests!");
+                exception.printStackTrace();
+            }
+            try {
+                spawnEntities();
+            } catch (Exception exception) {
+                Logger.warn("Failed to correctly spawn entities!");
+                exception.printStackTrace();
+            }
+        };
     }
 
     private void assignPedestalMaterial(Location location) {
@@ -202,8 +198,6 @@ public class FitAnything {
         int baseZ = lowestCorner.getBlockZ();
         World world = lowestCorner.getWorld();
 
-        // Cap synchronous world reads on large schematics. Small structures retain
-        // the original exact step=1 scan; large structures use a representative sample.
         int xStep = Math.max(1, Math.ceilDiv(sizeX, 24));
         int yStep = Math.max(1, Math.ceilDiv(sizeY, 12));
         int zStep = Math.max(1, Math.ceilDiv(sizeZ, 24));
@@ -256,37 +250,74 @@ public class FitAnything {
         throw new IllegalStateException("Weighted random selection failed.");
     }
 
-    private void addPedestal(Location location) {
-        if (this instanceof FitAirBuilding || this instanceof FitLiquidBuilding) return;
-        Location lowestCorner = location.clone().add(schematicOffset);
-        for (int x = 0; x < schematicClipboard.getDimensions().x(); x++)
-            for (int z = 0; z < schematicClipboard.getDimensions().z(); z++) {
-                Block groundBlock = lowestCorner.clone().add(new Vector(x, 0, z)).getBlock();
-                if (groundBlock.getType().isAir()) continue;
-                for (int y = -1; y > -11; y--) {
-                    Block block = lowestCorner.clone().add(new Vector(x, y, z)).getBlock();
-                    if (SurfaceMaterials.ignorable(block.getType()))
-                        block.setType(getPedestalMaterial(!block.getRelative(BlockFace.UP).getType().isSolid()), false);
-                    else break;
-                }
-            }
-    }
+    private void addPedestalFawe(EditSession editSession, Location adjustedLocation) throws Exception {
+        int sizeX = schematicClipboard.getDimensions().x();
+        int sizeZ = schematicClipboard.getDimensions().z();
+        int baseX = adjustedLocation.getBlockX();
+        int baseY = adjustedLocation.getBlockY();
+        int baseZ = adjustedLocation.getBlockZ();
 
-    private void clearTrees(Location location) {
-        Location highestCorner = location.clone().add(schematicOffset).add(new Vector(0, schematicClipboard.getDimensions().y() + 1, 0));
-        boolean detectedTreeElement = true;
-        for (int x = 0; x < schematicClipboard.getDimensions().x(); x++)
-            for (int z = 0; z < schematicClipboard.getDimensions().z(); z++) {
-                for (int y = 0; y < 31; y++) {
-                    if (!detectedTreeElement) break;
-                    detectedTreeElement = false;
-                    Block block = highestCorner.clone().add(new Vector(x, y, z)).getBlock();
-                    if (SurfaceMaterials.ignorable(block.getType()) && !block.getType().isAir()) {
-                        detectedTreeElement = true;
-                        block.setType(Material.AIR, false);
+        for (int x = 0; x < sizeX; x++) {
+            for (int z = 0; z < sizeZ; z++) {
+                BlockVector3 ground = BlockVector3.at(baseX + x, baseY, baseZ + z);
+                if (editSession.getBlock(ground).getBlockType().getMaterial().isAir()) continue;
+
+                for (int y = -1; y > -11; y--) {
+                    BlockVector3 position = BlockVector3.at(baseX + x, baseY + y, baseZ + z);
+                    Material existing = WorldEditUtils.adaptMaterial(editSession.getBlock(position));
+                    if (existing == null || !SurfaceMaterials.ignorable(existing)) break;
+
+                    boolean surface = !editSession.getBlock(position.add(0, 1, 0))
+                            .getBlockType().getMaterial().isSolid();
+                    Material replacement = getPedestalMaterial(surface);
+                    if (replacement != null) {
+                        editSession.setBlock(position, BukkitAdapter.adapt(replacement.createBlockData()));
                     }
                 }
             }
+        }
+    }
+
+    private void clearTreesFawe(EditSession editSession, Location adjustedLocation) throws Exception {
+        int sizeX = schematicClipboard.getDimensions().x();
+        int sizeZ = schematicClipboard.getDimensions().z();
+        int baseX = adjustedLocation.getBlockX();
+        int baseY = adjustedLocation.getBlockY() + schematicClipboard.getDimensions().y() + 1;
+        int baseZ = adjustedLocation.getBlockZ();
+
+        for (int x = 0; x < sizeX; x++) {
+            for (int z = 0; z < sizeZ; z++) {
+                for (int y = 0; y < 31; y++) {
+                    BlockVector3 position = BlockVector3.at(baseX + x, baseY + y, baseZ + z);
+                    Material existing = WorldEditUtils.adaptMaterial(editSession.getBlock(position));
+                    if (existing != null && !existing.isAir() && SurfaceMaterials.ignorable(existing)) {
+                        editSession.setBlock(position, BukkitAdapter.adapt(Material.AIR.createBlockData()));
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private void clearEntityMarkersFawe(EditSession editSession, Location adjustedLocation) throws Exception {
+        for (Vector position : schematicContainer.getVanillaSpawns().keySet()) {
+            clearMarker(editSession, adjustedLocation, position);
+        }
+        for (Vector position : schematicContainer.getEliteMobsSpawns().keySet()) {
+            clearMarker(editSession, adjustedLocation, position);
+        }
+        for (Vector position : schematicContainer.getMythicMobsSpawns().keySet()) {
+            clearMarker(editSession, adjustedLocation, position);
+        }
+    }
+
+    private void clearMarker(EditSession editSession, Location adjustedLocation, Vector relative) throws Exception {
+        BlockVector3 worldPosition = BlockVector3.at(
+                adjustedLocation.getBlockX() + relative.getBlockX(),
+                adjustedLocation.getBlockY() + relative.getBlockY(),
+                adjustedLocation.getBlockZ() + relative.getBlockZ());
+        editSession.setBlock(worldPosition, BukkitAdapter.adapt(Material.AIR.createBlockData()));
     }
 
     private void fillChests() {
@@ -331,12 +362,10 @@ public class FitAnything {
     private void spawnEntities() {
         for (Vector entityPosition : schematicContainer.getVanillaSpawns().keySet()) {
             Location signLocation = LocationProjector.project(location, schematicOffset, entityPosition).clone();
-            signLocation.getBlock().setType(Material.AIR);
             signLocation.add(new Vector(0.5, 0, 0.5));
-            signLocation.getChunk().load();
             Entity entity = signLocation.getWorld().spawnEntity(signLocation, schematicContainer.getVanillaSpawns().get(entityPosition));
             entity.setPersistent(true);
-            if (entity instanceof LivingEntity) ((LivingEntity) entity).setRemoveWhenFarAway(false);
+            if (entity instanceof LivingEntity livingEntity) livingEntity.setRemoveWhenFarAway(false);
 
             if (!VersionChecker.serverVersionOlderThan(21, 0) && entity.getType().equals(EntityType.END_CRYSTAL)) {
                 EnderCrystal enderCrystal = (EnderCrystal) entity;
@@ -346,7 +375,6 @@ public class FitAnything {
 
         for (Vector elitePosition : schematicContainer.getEliteMobsSpawns().keySet()) {
             Location eliteLocation = LocationProjector.project(location, schematicOffset, elitePosition).clone();
-            eliteLocation.getBlock().setType(Material.AIR);
             eliteLocation.add(new Vector(0.5, 0, 0.5));
             String bossFilename = schematicContainer.getEliteMobsSpawns().get(elitePosition);
             if (!EliteMobs.Spawn(eliteLocation, bossFilename)) return;
@@ -364,7 +392,6 @@ public class FitAnything {
 
         for (Map.Entry<Vector, String> entry : schematicContainer.getMythicMobsSpawns().entrySet()) {
             Location mobLocation = LocationProjector.project(location, schematicOffset, entry.getKey()).clone();
-            mobLocation.getBlock().setType(Material.AIR);
             if (!MythicMobs.Spawn(mobLocation, entry.getValue())) return;
         }
     }
