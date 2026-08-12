@@ -21,13 +21,13 @@ repositories {
 }
 
 dependencies {
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
-    compileOnly 'org.projectlombok:lombok:1.18.30'
+    // Lombok 1.18.46 includes current JDK 25 fixes/support needed by this Java 25 build.
+    annotationProcessor 'org.projectlombok:lombok:1.18.46'
+    compileOnly 'org.projectlombok:lombok:1.18.46'
 
     // BetterStructures only consumes MagmaCore's shared/core APIs. The full
     // MagmaCore distribution also bundles version-specific NMS modules which
-    // BetterStructures never imports and which require locally provisioned
-    // Spigot server artifacts to compile. CI publishes the pinned upstream
+    // BetterStructures no longer imports. CI publishes the pinned upstream
     // :core module to Maven Local before this build.
     implementation (group: 'com.magmaguy', name: 'core', version: '2.2.0-SNAPSHOT'){
         changing = true
