@@ -1,7 +1,7 @@
 name: BetterStructures
 version: '2.6.3'
 main: com.magmaguy.betterstructures.BetterStructures
-api-version: '1.21.11'
+api-version: '26.2'
 depend: [ FastAsyncWorldEdit ]
 softdepend:
   - EliteMobs
