@@ -9,7 +9,6 @@ import com.magmaguy.betterstructures.config.modules.ModulesConfigFields;
 import com.magmaguy.betterstructures.config.treasures.TreasureConfig;
 import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.betterstructures.util.WorldEditUtils;
-import com.magmaguy.easyminecraftgoals.NMSManager;
 import com.magmaguy.magmacore.util.Logger;
 import com.magmaguy.magmacore.util.SpigotMessage;
 import com.magmaguy.magmacore.util.WorkloadRunnable;
@@ -133,7 +132,7 @@ public final class ModulePasting {
         int baseY = location.getBlockY();
         int baseZ = location.getBlockZ();
 
-        // Create edit session for actual placement
+        // FAWE provides the WorldEdit API and accelerates this edit-session path at runtime.
         com.sk89q.worldedit.world.World adaptedWorld = BukkitAdapter.adapt(world);
 
         try (EditSession editSession = WorldEdit.getInstance().newEditSession(adaptedWorld)) {
@@ -325,7 +324,24 @@ public final class ModulePasting {
         }
 
         List<Pasteable> slowBlocks = new ArrayList<>();
+
+        // Replace the old MagmaCore version-specific native-palette adapter with one
+        // WorldEdit edit session. At runtime FastAsyncWorldEdit provides this API and
+        // performs the queued block work using FAWE's optimized placement engine.
+        final EditSession fastEditSession;
+        if (this.createModularWorld) {
+            fastEditSession = WorldEdit.getInstance().newEditSession(BukkitAdapter.adapt(world));
+            fastEditSession.setTrackingHistory(false);
+            fastEditSession.setSideEffectApplier(SideEffectSet.none());
+        } else {
+            fastEditSession = null;
+        }
+
         WorkloadRunnable pasteMeRunnable = new WorkloadRunnable(.1, () -> {
+            if (fastEditSession != null) {
+                fastEditSession.close();
+            }
+
             WorkloadRunnable vanillaPlacementRunnable = new WorkloadRunnable(.1, () -> {
                 postPasteProcessing(entityPasteInfos);
             });
@@ -349,21 +365,33 @@ public final class ModulePasting {
                 continue;
             }
 
-            // World-based generation: keep original split between fast/slow
+            // World-based generation: keep the original split between fast/slow.
+            // Directional/light-sensitive blocks stay on Bukkit placement so their
+            // side effects and orientation behavior remain unchanged.
             if (pasteable.blockData.getLightEmission() > 0
                     || pasteable.blockData instanceof Directional
                     || pasteable.blockData instanceof Rail
                     || pasteable.blockData instanceof Sign) {
                 slowBlocks.add(pasteable);
             } else {
+                BlockState worldEditState = BukkitAdapter.adapt(pasteable.blockData);
+                if (worldEditState == null) {
+                    slowBlocks.add(pasteable);
+                    continue;
+                }
+
                 pasteMeRunnable.addWorkload(() -> {
-                    NMSManager.getAdapter().setBlockInNativeDataPalette(
-                            pasteable.location.getWorld(),
-                            pasteable.location.getBlockX(),
-                            pasteable.location.getBlockY(),
-                            pasteable.location.getBlockZ(),
-                            pasteable.blockData,
-                            true);
+                    try {
+                        fastEditSession.setBlock(
+                                BlockVector3.at(
+                                        pasteable.location.getBlockX(),
+                                        pasteable.location.getBlockY(),
+                                        pasteable.location.getBlockZ()),
+                                worldEditState);
+                    } catch (WorldEditException e) {
+                        Logger.warn("FAWE placement failed at " + pasteable.location + ": " + e.getMessage());
+                        pasteable.location.getBlock().setBlockData(pasteable.blockData, false);
+                    }
                 });
             }
         }
