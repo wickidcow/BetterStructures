@@ -10,12 +10,11 @@ on:
   pull_request:
     branches: [ "master" ]
 
-# BetterStructures 2.6.3 currently uses MagmaCore APIs newer than the stale
-# 2.2.0-SNAPSHOT available from the public MagmaGuy Maven repository. Pin the
-# source revision used by CI so builds are reproducible rather than depending on
-# whichever snapshot happens to be served at build time.
+# Pin source-only dependencies so CI remains reproducible while their public
+# snapshot/release repositories catch up with Paper 26.2.
 env:
   MAGMACORE_REF: d80637de6fcb0f228fc2142c442d1de81ffad8ee
+  MOCKBUKKIT_REF: 55ceb39635aa2347ca55e4246b1df60ef0f6520b
 
 jobs:
   build:
@@ -33,6 +32,13 @@ jobs:
           repository: MagmaGuy/MagmaCore
           ref: ${{ env.MAGMACORE_REF }}
           path: .dependencies/MagmaCore
+
+      - name: Check out pinned MockBukkit 26.2
+        uses: actions/checkout@v7
+        with:
+          repository: MockBukkit/MockBukkit
+          ref: ${{ env.MOCKBUKKIT_REF }}
+          path: .dependencies/MockBukkit
 
       # MagmaCore declares Gradle 9.0.0, but its repository does not commit the
       # gradle-wrapper.jar. Install that exact Gradle version explicitly instead
@@ -55,12 +61,21 @@ jobs:
       - name: Build pinned MagmaCore core dependency
         run: gradle -p .dependencies/MagmaCore :core:publishToMavenLocal --no-daemon
 
-      # Paper 26.2 is a Java 25 server/API target for this fork.
-      - name: Set up JDK 25 for BetterStructures
+      # Paper 26.2, MockBukkit 26.2, and this BetterStructures fork target Java 25.
+      - name: Set up JDK 25
         uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: 'temurin'
+
+      # Maven Central currently trails MockBukkit's official 26.2 branch. Build
+      # the exact upstream commit locally so the tests use Paper 26.2 registry
+      # data rather than booting a 1.21/26.1 mock against the 26.2 API.
+      - name: Build pinned MockBukkit 26.2 test runtime
+        run: |
+          chmod +x .dependencies/MockBukkit/gradlew
+          cd .dependencies/MockBukkit
+          ./gradlew :publishToMavenLocal -x test --no-daemon
 
       - name: Make BetterStructures wrapper executable
         run: chmod +x gradlew
