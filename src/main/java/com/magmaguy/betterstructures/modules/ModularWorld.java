@@ -11,6 +11,11 @@ import com.magmaguy.elitemobs.mobconstructor.custombosses.CustomBossEntity;
 import com.magmaguy.elitemobs.mobconstructor.custombosses.InstancedBossEntity;
 import com.magmaguy.magmacore.instance.MatchInstance;
 import com.magmaguy.magmacore.util.Logger;
+import com.sk89q.worldedit.EditSession;
+import com.sk89q.worldedit.WorldEdit;
+import com.sk89q.worldedit.bukkit.BukkitAdapter;
+import com.sk89q.worldedit.math.BlockVector3;
+import com.sk89q.worldedit.util.SideEffectSet;
 import lombok.Getter;
 import org.bukkit.*;
 import org.bukkit.block.Block;
@@ -101,21 +106,37 @@ public class ModularWorld {
     }
 
     public List<Block> spawnChests() {
+        placeLocationsWithFawe(chestLocations, Material.CHEST);
         List<Block> chests = new ArrayList<>();
         for (Location chestLocation : chestLocations) {
-            chestLocation.getBlock().setType(Material.CHEST);
             chests.add(chestLocation.getBlock());
         }
         return chests;
     }
 
     public List<Block> spawnBarrels() {
+        placeLocationsWithFawe(barrelLocations, Material.BARREL);
         List<Block> barrels = new ArrayList<>();
         for (Location barrelLocation : barrelLocations) {
-            barrelLocation.getBlock().setType(Material.BARREL);
             barrels.add(barrelLocation.getBlock());
         }
         return barrels;
+    }
+
+    private void placeLocationsWithFawe(List<Location> locations, Material material) {
+        if (locations.isEmpty()) return;
+        try (EditSession editSession = WorldEdit.getInstance().newEditSession(BukkitAdapter.adapt(world))) {
+            editSession.setTrackingHistory(false);
+            editSession.setSideEffectApplier(SideEffectSet.none());
+            for (Location location : locations) {
+                editSession.setBlock(
+                        BlockVector3.at(location.getBlockX(), location.getBlockY(), location.getBlockZ()),
+                        BukkitAdapter.adapt(material.createBlockData()));
+            }
+        } catch (Exception exception) {
+            Logger.warn("Failed to place modular " + material + " blocks through FAWE: " + exception.getMessage());
+            exception.printStackTrace();
+        }
     }
 
     //todo: maybe this should go into extractioncraft later
@@ -168,7 +189,6 @@ public class ModularWorld {
                                 scheduledInstancedEntities.add(new ScheduledInstancedEntity(otherLocation.location(), customBossesConfigFields, parsedString, spawnPoolsConfigFields.getMinLevel(), spawnPoolsConfigFields.getMaxLevel()));
                             }
                         }
-                //got to keep the memory clear for this one, unfortunately
                 otherLocations.clear();
                 generationFinished();
             }
@@ -178,15 +198,14 @@ public class ModularWorld {
     public List<InstancedBossEntity> spawnInstancedEntities(MatchInstance matchInstance) {
         List<InstancedBossEntity> instancedBossEntities = new ArrayList<>();
         for (ScheduledInstancedEntity scheduledInstancedEntity : scheduledInstancedEntities) {
-            int totalRadius = 2 * 128 + 64;//todo this is just a placeholder for now that hardcodes the radius
-            Vector2i center = new Vector2i(64, 64); //todo this is just a placeholder for now that hardcodes the center
+            int totalRadius = 2 * 128 + 64;
+            Vector2i center = new Vector2i(64, 64);
             Vector2i entityLocation = new Vector2i(scheduledInstancedEntity.location.getBlockX(), scheduledInstancedEntity.location.getBlockZ());
             double distance = center.distance(entityLocation);
             double percentageDistance = distance / totalRadius;
             int level = (int) Math.round((1.0 - percentageDistance) * scheduledInstancedEntity.maxLevel + percentageDistance * scheduledInstancedEntity.minLevel);
 
             InstancedBossEntity instancedBossEntity = new InstancedBossEntity(scheduledInstancedEntity.configFields, scheduledInstancedEntity.location, matchInstance, level);
-//            InstancedBossEntity instancedBossEntity = new InstancedBossEntity(scheduledInstancedEntity.configFields, scheduledInstancedEntity.location, matchInstance, 10);//todo: level is just a placeholder for now
             instancedBossEntity.spawn(true);
             instancedBossEntity.addCustomData(new NamespacedKey("betterstructures", "spawnpool"), scheduledInstancedEntity.originalSpawnPool);
             instancedBossEntities.add(instancedBossEntity);
