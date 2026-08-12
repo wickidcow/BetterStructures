@@ -11,10 +11,6 @@ version = '2.6.3'
 repositories {
     mavenCentral()
     mavenLocal()
-    maven {
-        name = 'spigotmc-repo'
-        url = 'https://hub.spigotmc.org/nexus/content/repositories/snapshots/'
-    }
     maven { url = 'https://repo.magmaguy.com/releases' }
     maven { url = "https://repo.magmaguy.com/snapshots" }
     maven { url = 'https://repo.codemc.org/repository/maven-public' }
@@ -39,11 +35,18 @@ dependencies {
     compileOnly group: 'net.Indyuce', name: 'MMOItems-API', version: '6.9.2-SNAPSHOT'
     compileOnly group: 'com.sk89q.worldguard', name: 'worldguard-bukkit', version: '7.0.7'
     compileOnly group: 'com.sk89q.worldedit', name: 'worldedit-bukkit', version: '7.3.0'
-    compileOnly 'org.spigotmc:spigot-api:26.2-R0.1-SNAPSHOT'
+
+    // Paper is the compile/runtime API target. Purpur and other Paper-compatible
+    // forks inherit this API without requiring fork-specific compile dependencies.
+    compileOnly 'io.papermc.paper:paper-api:26.2.build.+'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-    testImplementation 'io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT'
-    testImplementation 'org.mockbukkit.mockbukkit:mockbukkit-v1.21:4.110.0'
+    testImplementation 'io.papermc.paper:paper-api:26.2.build.+'
+    testImplementation('org.mockbukkit.mockbukkit:mockbukkit-v1.21:4.110.0') {
+        // Keep the production/test API baseline on Paper 26.2 instead of allowing
+        // MockBukkit to pull an older Paper API transitively.
+        exclude group: 'io.papermc.paper', module: 'paper-api'
+    }
     testImplementation 'org.mockito:mockito-core:5.12.0'
     testImplementation group: 'com.sk89q.worldedit', name: 'worldedit-bukkit', version: '7.3.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -110,7 +113,7 @@ ext {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21) // or your target version
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
