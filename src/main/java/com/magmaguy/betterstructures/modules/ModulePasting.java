@@ -29,10 +29,7 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Container;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.Directional;
-import org.bukkit.block.data.Rail;
 import org.bukkit.block.data.type.Chest;
-import org.bukkit.block.data.type.Sign;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -323,11 +320,10 @@ public final class ModulePasting {
             }
         }
 
-        List<Pasteable> slowBlocks = new ArrayList<>();
-
-        // Replace the old MagmaCore version-specific native-palette adapter with one
-        // WorldEdit edit session. At runtime FastAsyncWorldEdit provides this API and
-        // performs the queued block work using FAWE's optimized placement engine.
+        // When generating structures into a world, use one WorldEdit edit session for every
+        // ordinary block. At runtime FAWE accelerates this path and keeps block-state ordering
+        // coherent. Mixing Bukkit setBlockData calls into an active FAWE paste can leave Paper
+        // with a pending chest/spawner block entity while the block is still observed as air.
         final EditSession fastEditSession;
         if (this.createModularWorld) {
             fastEditSession = WorldEdit.getInstance().newEditSession(BukkitAdapter.adapt(world));
@@ -337,63 +333,83 @@ public final class ModulePasting {
             fastEditSession = null;
         }
 
+        // Bukkit placement is now a true fallback only. It is never interleaved with the FAWE
+        // session; fallback work begins after the edit session has been closed.
+        List<Pasteable> fallbackBlocks = new ArrayList<>();
+
         WorkloadRunnable pasteMeRunnable = new WorkloadRunnable(.1, () -> {
             if (fastEditSession != null) {
-                fastEditSession.close();
+                try {
+                    fastEditSession.close();
+                } catch (Exception e) {
+                    Logger.warn("Failed to close FAWE structure paste session cleanly: " + e.getMessage());
+                }
             }
 
-            WorkloadRunnable vanillaPlacementRunnable = new WorkloadRunnable(.1, () -> {
+            if (fallbackBlocks.isEmpty()) {
+                // Cross a tick boundary after closing FAWE before touching NBT/container state.
+                Bukkit.getScheduler().runTask(MetadataHandler.PLUGIN,
+                        () -> postPasteProcessing(entityPasteInfos));
+                return;
+            }
+
+            WorkloadRunnable fallbackPlacementRunnable = new WorkloadRunnable(.1, () -> {
+                // The fallback queue is complete and FAWE is already closed; NBT work can now
+                // begin without a Bukkit/FAWE block-state race.
                 postPasteProcessing(entityPasteInfos);
             });
 
-            for (Pasteable slowBlock : slowBlocks)
-                vanillaPlacementRunnable.addWorkload(() -> {
-                    slowBlock.location.getBlock().setBlockData(slowBlock.blockData, false);
+            for (Pasteable fallbackBlock : fallbackBlocks) {
+                fallbackPlacementRunnable.addWorkload(() -> {
+                    try {
+                        fallbackBlock.location.getBlock().setBlockData(fallbackBlock.blockData, false);
+                    } catch (Exception e) {
+                        Logger.warn("Bukkit fallback placement failed at " + fallbackBlock.location + ": " + e.getMessage());
+                    }
                 });
-            vanillaPlacementRunnable.runTaskTimer(MetadataHandler.PLUGIN, 0, 1);
+            }
+            fallbackPlacementRunnable.runTaskTimer(MetadataHandler.PLUGIN, 1, 1);
         });
 
         List<InterpretedSign> freshlyInterpretedSigns = new ArrayList<>();
 
-        // Enable fast path only for world-based generation
+        // Enable FAWE fast path for world-based generation. Non-world generation retains the
+        // original Bukkit behavior, but still runs as one isolated phase.
         final boolean fastPathEnabled = this.createModularWorld;
 
         for (Pasteable pasteable : pasteableList) {
             if (!fastPathEnabled) {
-                // Not world-based generation: force slow placement for EVERYTHING
-                slowBlocks.add(pasteable);
+                fallbackBlocks.add(pasteable);
                 continue;
             }
 
-            // World-based generation: keep the original split between fast/slow.
-            // Directional/light-sensitive blocks stay on Bukkit placement so their
-            // side effects and orientation behavior remain unchanged.
-            if (pasteable.blockData.getLightEmission() > 0
-                    || pasteable.blockData instanceof Directional
-                    || pasteable.blockData instanceof Rail
-                    || pasteable.blockData instanceof Sign) {
-                slowBlocks.add(pasteable);
-            } else {
-                BlockState worldEditState = BukkitAdapter.adapt(pasteable.blockData);
-                if (worldEditState == null) {
-                    slowBlocks.add(pasteable);
-                    continue;
-                }
-
-                pasteMeRunnable.addWorkload(() -> {
-                    try {
-                        fastEditSession.setBlock(
-                                BlockVector3.at(
-                                        pasteable.location.getBlockX(),
-                                        pasteable.location.getBlockY(),
-                                        pasteable.location.getBlockZ()),
-                                worldEditState);
-                    } catch (WorldEditException e) {
-                        Logger.warn("FAWE placement failed at " + pasteable.location + ": " + e.getMessage());
-                        pasteable.location.getBlock().setBlockData(pasteable.blockData, false);
-                    }
-                });
+            final BlockState worldEditState;
+            try {
+                worldEditState = BukkitAdapter.adapt(pasteable.blockData);
+            } catch (RuntimeException e) {
+                Logger.warn("Could not adapt block data for FAWE at " + pasteable.location + ": " + e.getMessage());
+                fallbackBlocks.add(pasteable);
+                continue;
             }
+
+            if (worldEditState == null) {
+                fallbackBlocks.add(pasteable);
+                continue;
+            }
+
+            pasteMeRunnable.addWorkload(() -> {
+                try {
+                    fastEditSession.setBlock(
+                            BlockVector3.at(
+                                    pasteable.location.getBlockX(),
+                                    pasteable.location.getBlockY(),
+                                    pasteable.location.getBlockZ()),
+                            worldEditState);
+                } catch (WorldEditException | RuntimeException e) {
+                    Logger.warn("FAWE placement failed at " + pasteable.location + ": " + e.getMessage());
+                    fallbackBlocks.add(pasteable);
+                }
+            });
         }
 
         pasteMeRunnable.runTaskTimer(MetadataHandler.PLUGIN, 0, 1);
@@ -402,12 +418,8 @@ public final class ModulePasting {
     }
 
     private void postPasteProcessing(List<EntityPasteInfo> entityPasteInfos) {
-        if (createModularWorld) {
-            createModularWorld(world, worldFolder);
-            modularWorld.spawnOtherEntities();
-        }
-
-        // 1) Paste deferred NBT-rich blocks (dispenser, spawner, etc.) with WE so NBT is preserved
+        // Paste deferred NBT-rich blocks (dispenser, spawner, etc.) with WorldEdit/FAWE so NBT
+        // is preserved. The ordinary-block session has already been closed before this starts.
         if (!nbtToPlace.isEmpty()) {
             com.sk89q.worldedit.world.World adaptedWorld = BukkitAdapter.adapt(world);
             try (EditSession editSession = WorldEdit.getInstance().newEditSession(adaptedWorld)) {
@@ -429,9 +441,25 @@ public final class ModulePasting {
             } catch (Exception e) {
                 Logger.warn("Failed NBT post-paste session: " + e.getMessage());
             }
+
+            // FAWE may finalize queued block-entity data as its edit session closes. Do not let
+            // Bukkit immediately query/update those same chunks in that transition. Continue on
+            // the next server tick so Paper sees the matching base block before its block entity.
+            Bukkit.getScheduler().runTask(MetadataHandler.PLUGIN,
+                    () -> finishPostPasteProcessing(entityPasteInfos));
+            return;
         }
 
-        // 2) Paste entities from schematics (armor stands, etc.)
+        finishPostPasteProcessing(entityPasteInfos);
+    }
+
+    private void finishPostPasteProcessing(List<EntityPasteInfo> entityPasteInfos) {
+        if (createModularWorld) {
+            createModularWorld(world, worldFolder);
+            modularWorld.spawnOtherEntities();
+        }
+
+        // Paste entities from schematics (armor stands, etc.)
         pasteArmorStandsForBatch(entityPasteInfos);
 
         for (ChestPlacement chestPlacement : chestsToPlace) {
@@ -493,7 +521,7 @@ public final class ModulePasting {
             }
         }
 
-        // 4) Spawn entities last
+        // Spawn entities last
         for (EntitySpawn entitySpawn : entitiesToSpawn) {
             try {
                 LivingEntity entity = (LivingEntity) world.spawnEntity(entitySpawn.location, entitySpawn.entityType);
