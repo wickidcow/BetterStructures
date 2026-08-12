@@ -50,7 +50,7 @@ jobs:
       # MagmaCore declares Gradle 9.0.0, but its repository does not commit the
       # gradle-wrapper.jar. Install that exact Gradle version explicitly instead
       # of relying on its incomplete wrapper checkout.
-      - name: Set up Gradle 9.0.0
+      - name: Set up Gradle 9.0.0 for MagmaCore
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.0.0'
@@ -75,26 +75,28 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
 
+      # Provision one modern Gradle distribution for both MockBukkit and
+      # BetterStructures. This avoids extra wrapper downloads during the build,
+      # which can otherwise turn a transient network EOF into a false compile failure.
+      - name: Set up Gradle 9.6.1 for Paper 26.2 build
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.6.1'
+
       # Maven Central currently trails MockBukkit's official 26.2 branch. Build
       # the exact upstream commit locally so the tests use Paper 26.2 registry
       # data rather than booting a 1.21/26.1 mock against the 26.2 API.
       - name: Build pinned MockBukkit 26.2 test runtime
-        run: |
-          chmod +x .dependencies/MockBukkit/gradlew
-          cd .dependencies/MockBukkit
-          ./gradlew :publishToMavenLocal -x test --no-daemon
-
-      - name: Make BetterStructures wrapper executable
-        run: chmod +x gradlew
+        run: gradle -p .dependencies/MockBukkit :publishToMavenLocal -x test --no-daemon
 
       - name: Compile BetterStructures
-        run: ./gradlew clean compileJava --no-daemon
+        run: gradle clean compileJava --no-daemon
 
       - name: Run BetterStructures tests
-        run: ./gradlew test --no-daemon
+        run: gradle test --no-daemon
 
       - name: Build shaded BetterStructures JAR
-        run: ./gradlew shadowJar --no-daemon
+        run: gradle shadowJar --no-daemon
 
       - name: Prepare raw Albion JAR
         run: |
