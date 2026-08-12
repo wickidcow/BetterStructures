@@ -17,15 +17,29 @@ This branch is maintained specifically for **AlbionMC.com** with these goals:
 - use **FastAsyncWorldEdit (FAWE)** as the required WorldEdit backend;
 - queue structure-generation work instead of allowing bursts of expensive fitting work during new-chunk events;
 - pause ordinary player-driven structure generation when server MSPT/TPS indicates the main thread is under pressure;
-- spread schematic preparation across ticks before the existing distributed paste workload begins;
+- serialize the expensive fit/load/paste path so several large structures do not compete at once;
+- prepare required structure chunks through Paper's async chunk API in small batches;
+- perform the normal structure block loop in an asynchronous FAWE `EditSession`, while returning Bukkit-only preparation and completion work to the main thread;
+- prevent BetterStructures' own internal chunk loads from recursively generating more BetterStructures structures;
 - target **Paper 1.21.11 and newer only**. Older Minecraft/Paper compatibility is intentionally out of scope.
+
+## Performance defaults
+
+Player-driven structure generation is guarded by conservative load thresholds for new configs:
+
+- pause around **42 MSPT** or **18.5 TPS**;
+- resume after recovery around **32 MSPT** and **19.5 TPS**;
+- admit expensive fit jobs separately instead of allowing a burst from fast resource-world exploration;
+- load structure chunks in small batches before starting the FAWE edit.
+
+Existing configuration values are preserved when upgrading. These defaults are intended as a safe starting point and can be tuned from real AlbionMC spark profiles after runtime testing.
 
 ## Requirements
 
 - Paper **1.21.11+**
 - Java **21+**
 - FastAsyncWorldEdit **2.14.3+**
-  - For Minecraft 26.x, use a FAWE release that explicitly supports that server version.
+  - For newer Minecraft versions, use a FAWE release that explicitly supports that server version.
 
 FastAsyncWorldEdit provides the WorldEdit API used by BetterStructures and is intentionally a hard dependency in this fork.
 
