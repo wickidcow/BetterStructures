@@ -2,6 +2,11 @@ package com.magmaguy.betterstructures.modules;
 
 import com.magmaguy.betterstructures.MetadataHandler;
 import com.magmaguy.magmacore.util.Logger;
+import com.sk89q.worldedit.EditSession;
+import com.sk89q.worldedit.WorldEdit;
+import com.sk89q.worldedit.bukkit.BukkitAdapter;
+import com.sk89q.worldedit.math.BlockVector3;
+import com.sk89q.worldedit.util.SideEffectSet;
 import lombok.Getter;
 import org.bukkit.*;
 import org.bukkit.entity.Display;
@@ -44,7 +49,7 @@ public class WFCNode {
      * @param nodeMap      The global node map reference
      */
     public WFCNode(Vector3i nodePosition, World world, WFCLattice lattice, Map<Vector3i, WFCNode> nodeMap, WFCGenerator wfcGenerator) {
-        this.nodePosition = new Vector3i(nodePosition);  // Defensive copy
+        this.nodePosition = new Vector3i(nodePosition);
         this.world = world;
         this.lattice = lattice;
         this.nodeMap = nodeMap;
@@ -80,26 +85,16 @@ public class WFCNode {
 
     /**
      * Gets a safe copy of the cell location.
-     *
-     * @return A new Vector3i containing the cell location
      */
     public Vector3i getCellLocation() {
         return new Vector3i(nodePosition);
     }
 
-    /**
-     * Updates the possible states for this node based on its adjacent nodes.
-     */
     public void updatePossibleStates() {
         possibleStates = ModulesContainer.getValidModulesFromSurroundings(this);
         showDebugTextDisplays();
     }
 
-    /**
-     * Gets the count of valid module options for this cell.
-     *
-     * @return The number of valid options, or 0 if none are available
-     */
     public int getValidOptionCount() {
         if (possibleStates == null) {
             updatePossibleStates();
@@ -111,20 +106,10 @@ public class WFCNode {
         return possibleStates.size();
     }
 
-    /**
-     * Gets a map of neighboring cells in each direction.
-     *
-     * @return Map of Direction to WFCNode for each neighbor
-     */
     public Map<Direction, WFCNode> getOrientedNeighbors() {
         return adjacentNodes;
     }
 
-    /**
-     * Gets the possible states for this node.
-     * 
-     * @return Set of possible module states for this node
-     */
     public HashSet<ModulesContainer> getValidOptions() {
         if (possibleStates == null) {
             updatePossibleStates();
@@ -132,11 +117,6 @@ public class WFCNode {
         return possibleStates;
     }
 
-    /**
-     * Gets the real world location of this cell's origin point.
-     *
-     * @return Location object representing the cell's origin in the world
-     */
     public Location getRealLocation(Location startLocation) {
         Vector3i worldCoord;
         if (startLocation != null)
@@ -146,15 +126,12 @@ public class WFCNode {
         return new Location(world, worldCoord.x, worldCoord.y, worldCoord.z);
     }
 
-    /**
-     * Creates debug text displays showing cell information.
-     */
     public void showDebugTextDisplays() {
         if (!wfcGenerator.getModuleGeneratorsConfigFields().isDebug()) return;
         new BukkitRunnable() {
             @Override
             public void run() {
-                if (textDisplays != null && !textDisplays.isEmpty())        clearDebugDisplays();
+                if (textDisplays != null && !textDisplays.isEmpty()) clearDebugDisplays();
                 textDisplays = new ArrayList<>();
 
                 if (modulesContainer == null) {
@@ -207,7 +184,6 @@ public class WFCNode {
             Location tagLocation = centerLocation.clone().add(offset.x, offset.y, offset.z);
 
             spawnDebugText(tagLocation, entry.getKey().name(), color, 1);
-
             displayNeighborTags(tagLocation, entry.getValue(), color);
         }
     }
@@ -234,7 +210,7 @@ public class WFCNode {
         new BukkitRunnable() {
             @Override
             public void run() {
-                Location adjustedLocation = location.clone().subtract(new Vector(0,textDisplays.size()/2d,0));
+                Location adjustedLocation = location.clone().subtract(new Vector(0, textDisplays.size() / 2d, 0));
                 TextDisplay textDisplay = (TextDisplay) world.spawnEntity(adjustedLocation, EntityType.TEXT_DISPLAY);
                 configureTextDisplay(textDisplay, text, color, scale);
                 textDisplays.add(textDisplay);
@@ -256,23 +232,14 @@ public class WFCNode {
         display.setViewRange(1);
     }
 
-    /**
-     * Checks if this cell has been generated.
-     *
-     * @return true if the cell has a module container
-     */
     public boolean isCollapsed() {
         return modulesContainer != null;
     }
 
-    public boolean isNothing(){
+    public boolean isNothing() {
         return modulesContainer != null && modulesContainer.isNothing();
     }
 
-    /**
-     * Resets this cell's data.
-     *
-     */
     public void resetState() {
         if (isInitialNode() || isBoundary()) return;
 
@@ -283,14 +250,10 @@ public class WFCNode {
         }
     }
 
-
     public boolean isInitialNode() {
         return new Vector3i().equals(nodePosition);
     }
 
-    /**
-     * Clears generation data for this cell.
-     */
     public void clearGenerationData() {
         clearDebugDisplays();
         possibleStates = null;
@@ -303,34 +266,43 @@ public class WFCNode {
         }
     }
 
+    /**
+     * Debug lattice wireframe placement. Debug blocks are still world edits, so Albion's
+     * FAWE-native rule applies here too rather than falling back to Bukkit block writes.
+     */
     private void placeMaterial(Location startLocation, Material material) {
         int sizeXZ = wfcGenerator.getModuleGeneratorsConfigFields().getModuleSizeXZ();
         int sizeY = wfcGenerator.getModuleGeneratorsConfigFields().getModuleSizeY();
+        int baseX = startLocation.getBlockX();
+        int baseY = startLocation.getBlockY();
+        int baseZ = startLocation.getBlockZ();
 
-        for (int x = 0; x < sizeXZ; x++) {
-            for (int y = 0; y < sizeY; y++) {
-                for (int z = 0; z < sizeXZ; z++) {
-                    Location blockLocation = startLocation.clone().add(x, y, z);
+        try (EditSession editSession = WorldEdit.getInstance().newEditSession(BukkitAdapter.adapt(world))) {
+            editSession.setTrackingHistory(false);
+            editSession.setSideEffectApplier(SideEffectSet.none());
 
-                    // Check if block is on an edge (intersection of at least 2 faces)
-                    boolean isOnXEdge = (x == 0 || x == sizeXZ - 1);
-                    boolean isOnYEdge = (y == 0 || y == sizeY - 1);
-                    boolean isOnZEdge = (z == 0 || z == sizeXZ - 1);
+            for (int x = 0; x < sizeXZ; x++) {
+                for (int y = 0; y < sizeY; y++) {
+                    for (int z = 0; z < sizeXZ; z++) {
+                        boolean isOnXEdge = x == 0 || x == sizeXZ - 1;
+                        boolean isOnYEdge = y == 0 || y == sizeY - 1;
+                        boolean isOnZEdge = z == 0 || z == sizeXZ - 1;
 
-                    // Count how many edges this block touches
-                    int edgeCount = 0;
-                    if (isOnXEdge) edgeCount++;
-                    if (isOnYEdge) edgeCount++;
-                    if (isOnZEdge) edgeCount++;
+                        int edgeCount = 0;
+                        if (isOnXEdge) edgeCount++;
+                        if (isOnYEdge) edgeCount++;
+                        if (isOnZEdge) edgeCount++;
 
-                    // Place material only if block is on at least 2 edges (true edge/corner)
-                    if (edgeCount >= 2) {
-                        blockLocation.getBlock().setType(material);
-                    } else {
-                        blockLocation.getBlock().setType(Material.AIR);
+                        Material targetMaterial = edgeCount >= 2 ? material : Material.AIR;
+                        editSession.setBlock(
+                                BlockVector3.at(baseX + x, baseY + y, baseZ + z),
+                                BukkitAdapter.adapt(targetMaterial.createBlockData()));
                     }
                 }
             }
+        } catch (Exception exception) {
+            Logger.warn("Failed to paste WFC debug lattice through FAWE: " + exception.getMessage());
+            exception.printStackTrace();
         }
     }
 
@@ -353,6 +325,7 @@ public class WFCNode {
         try {
             Thread.sleep(50);
         } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             throw new RuntimeException(e);
         }
     }
