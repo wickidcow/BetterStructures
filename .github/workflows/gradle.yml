@@ -104,9 +104,9 @@ jobs:
           cp build/libs/BetterStructures.jar build/libs/BetterStructures-2.6.3-Albion.jar
           ls -lh build/libs/BetterStructures.jar build/libs/BetterStructures-2.6.3-Albion.jar
 
-      # GitHub Actions artifacts are archive downloads. Publish the actual .jar
-      # as a GitHub Release asset instead so it can be downloaded and dropped
-      # straight into the server's plugins directory without extracting a ZIP.
+      # GitHub's Actions artifact service always wraps downloads in a ZIP.
+      # To provide a genuinely raw .jar download, publish the jar as a GitHub
+      # Release asset and then surface its direct link in the Actions run summary.
       - name: Publish raw JAR release
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
         env:
@@ -125,3 +125,25 @@ jobs:
           fi
 
           gh release create "$TAG" "$JAR" "${RELEASE_FLAGS[@]}"
+
+      - name: Add raw JAR download to Actions summary
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        shell: bash
+        run: |
+          TAG="betterstructures-2.6.3-albion-build-${GITHUB_RUN_NUMBER}"
+          JAR_NAME="BetterStructures-2.6.3-Albion.jar"
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${JAR_NAME}"
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+
+          {
+            echo "# 🏰 BetterStructures Raw JAR"
+            echo
+            echo "✅ Build, tests, and packaging completed successfully."
+            echo
+            echo "## ⬇️ Direct download"
+            echo "[**Download ${JAR_NAME}**](${DOWNLOAD_URL})"
+            echo
+            echo "This link downloads the actual **.jar** file directly — no .zip extraction required."
+            echo
+            echo "[View GitHub Release](${RELEASE_URL})"
+          } >> "$GITHUB_STEP_SUMMARY"
