@@ -62,10 +62,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           VERSION="$(sed -n "s/^version = '\([^']*\)'.*/\1/p" build.gradle)"
           JAR="build/libs/BetterStructures-${VERSION}.jar"
           TAG="albion-${VERSION}-test"
           test -f "$JAR"
+
+          # The test release is intentionally reusable. Move its tag to the exact
+          # commit that just passed audit/build/tests before replacing the raw JAR.
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG" --force
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$JAR" --clobber
@@ -75,7 +81,6 @@ jobs:
               --prerelease
           else
             gh release create "$TAG" "$JAR" \
-              --target "$GITHUB_SHA" \
               --title "BetterStructures Albion ${VERSION} Test Build" \
               --notes "AlbionMC development test build from commit ${GITHUB_SHA}. This is a prerelease for resource-world runtime testing before the final v${VERSION} release." \
               --prerelease
