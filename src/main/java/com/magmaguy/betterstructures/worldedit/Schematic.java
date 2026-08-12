@@ -42,11 +42,6 @@ import java.util.function.Function;
 
 /**
  * BetterStructures schematic I/O and the Albion FAWE paste pipeline.
- *
- * <p>Natural structure placement is serialized, required chunks are prepared through
- * Paper's async chunk API in small batches, and the actual block loop runs through one
- * FAWE EditSession off the server thread. This preserves BetterStructures' barrier and
- * bedrock/pedestal semantics without the upstream per-block Bukkit paste workload.</p>
  */
 public final class Schematic {
 
@@ -63,20 +58,22 @@ public final class Schematic {
     private Schematic() {
     }
 
+    @FunctionalInterface
+    public interface FawePostProcessor {
+        void run(EditSession editSession, Location adjustedLocation) throws Exception;
+    }
+
     public static void shutdown() {
         PASTE_QUEUE.clear();
         INTERNAL_CHUNK_LOADS.clear();
         pasteInProgress = false;
+        FaweEditQueue.shutdown();
     }
 
     public static boolean isBusy() {
         return pasteInProgress || !PASTE_QUEUE.isEmpty() || FaweEditQueue.isBusy();
     }
 
-    /**
-     * Lets the new-chunk listener distinguish a player-generated chunk from a chunk
-     * BetterStructures itself had to load to fit an already-selected structure.
-     */
     public static boolean isInternalChunkLoad(Chunk chunk) {
         return INTERNAL_CHUNK_LOADS.contains(new ChunkKey(
                 chunk.getWorld().getUID(), chunk.getX(), chunk.getZ()));
@@ -112,8 +109,8 @@ public final class Schematic {
     }
 
     /**
-     * Direct FAWE paste retained for small explicit/component paths that expect the edit
-     * to be complete when this method returns. FAWE is the required WorldEdit provider.
+     * Synchronous FAWE paste for small component/explicit paths that require completion
+     * before returning. FastAsyncWorldEdit is the required WorldEdit provider.
      */
     public static void paste(Clipboard clipboard, Location location) {
         World world = BukkitAdapter.adapt(location.getWorld());
@@ -131,9 +128,9 @@ public final class Schematic {
     }
 
     /**
-     * Queue one natural structure paste. Only one BetterStructures FAWE structure edit
-     * runs at a time, which avoids several resource-world discoveries competing for
-     * chunk generation and FAWE queues simultaneously.
+     * Queue a natural structure. Chunk preparation happens through Paper's async chunk
+     * API and the complete block edit, including optional post-processing, is executed
+     * in the one global FAWE lane before chunk tickets are released.
      */
     public static void pasteSchematic(
             Clipboard schematicClipboard,
@@ -141,6 +138,7 @@ public final class Schematic {
             Vector schematicOffset,
             Runnable prePasteCallback,
             Function<Boolean, Material> pedestalMaterialProvider,
+            FawePostProcessor fawePostProcessor,
             Runnable onComplete) {
 
         PASTE_QUEUE.add(new PasteRequest(
@@ -149,6 +147,7 @@ public final class Schematic {
                 schematicOffset.clone(),
                 prePasteCallback,
                 pedestalMaterialProvider,
+                fawePostProcessor,
                 onComplete));
 
         if (Bukkit.isPrimaryThread()) {
@@ -162,10 +161,21 @@ public final class Schematic {
             Clipboard schematicClipboard,
             Location location,
             Vector schematicOffset,
+            Runnable prePasteCallback,
+            Function<Boolean, Material> pedestalMaterialProvider,
+            Runnable onComplete) {
+        pasteSchematic(schematicClipboard, location, schematicOffset, prePasteCallback,
+                pedestalMaterialProvider, null, onComplete);
+    }
+
+    public static void pasteSchematic(
+            Clipboard schematicClipboard,
+            Location location,
+            Vector schematicOffset,
             Function<Boolean, Material> pedestalMaterialProvider,
             Runnable onComplete) {
         pasteSchematic(schematicClipboard, location, schematicOffset, null,
-                pedestalMaterialProvider, onComplete);
+                pedestalMaterialProvider, null, onComplete);
     }
 
     private static void processNextPaste() {
@@ -331,7 +341,7 @@ public final class Schematic {
     }
 
     private static void executeFawePaste(PasteRequest request, org.bukkit.World bukkitWorld)
-            throws WorldEditException {
+            throws Exception {
 
         Clipboard clipboard = request.schematicClipboard();
         Location adjustedLocation = request.location().clone().add(request.schematicOffset());
@@ -388,6 +398,10 @@ public final class Schematic {
                     }
                 }
             }
+
+            if (request.fawePostProcessor() != null) {
+                request.fawePostProcessor().run(editSession, adjustedLocation);
+            }
         }
     }
 
@@ -426,6 +440,7 @@ public final class Schematic {
             Vector schematicOffset,
             Runnable prePasteCallback,
             Function<Boolean, Material> pedestalMaterialProvider,
+            FawePostProcessor fawePostProcessor,
             Runnable onComplete) {
     }
 
