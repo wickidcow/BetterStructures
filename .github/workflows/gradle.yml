@@ -33,6 +33,18 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      - name: FAWE-native block-write audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          MATCHES="$(grep -RInE '\.(setType|setBlockData)\(|setBlockInNativeDataPalette\(' src/main/java || true)"
+          if [[ -n "$MATCHES" ]]; then
+            echo "Direct Bukkit/NMS block writes remain; Albion 1.1.1 must route block changes through FAWE:"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "FAWE-native audit passed: no direct Bukkit/NMS block writes found."
+
       - name: Build and test
         run: ./gradlew clean test shadowJar
 
