@@ -2,6 +2,7 @@ package com.magmaguy.betterstructures.worldedit;
 
 import com.magmaguy.betterstructures.MetadataHandler;
 import com.magmaguy.betterstructures.config.DefaultConfig;
+import com.magmaguy.betterstructures.util.LegacySchematicSanitizer;
 import com.magmaguy.betterstructures.util.WorldEditUtils;
 import com.magmaguy.magmacore.util.Logger;
 import com.magmaguy.magmacore.util.WorkloadRunnable;
@@ -28,7 +29,6 @@ import org.bukkit.block.data.BlockData;
 import org.bukkit.util.Vector;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -54,8 +54,14 @@ public class Schematic {
 
         ClipboardFormat format = ClipboardFormats.findByFile(schematicFile);
 
-        try (ClipboardReader reader = format.getReader(new FileInputStream(schematicFile))) {
+        try (LegacySchematicSanitizer.SanitizedInput sanitizedInput = LegacySchematicSanitizer.open(schematicFile);
+             ClipboardReader reader = format.getReader(sanitizedInput.inputStream())) {
             clipboard = reader.read();
+            if (sanitizedInput.removedBedBlockEntities() > 0) {
+                Logger.info("Removed " + sanitizedInput.removedBedBlockEntities()
+                        + " obsolete minecraft:bed block-entity record(s) from "
+                        + schematicFile.getName() + " for Minecraft 26.2 compatibility.");
+            }
         } catch (IOException e) {
             e.printStackTrace();
             return null;
