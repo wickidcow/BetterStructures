@@ -62,10 +62,17 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
 
-      - name: Build BetterStructures
-        run: |
-          chmod +x gradlew
-          ./gradlew clean build --no-daemon --refresh-dependencies
+      - name: Make BetterStructures wrapper executable
+        run: chmod +x gradlew
+
+      - name: Compile BetterStructures
+        run: ./gradlew clean compileJava --no-daemon
+
+      - name: Run BetterStructures tests
+        run: ./gradlew test --no-daemon
+
+      - name: Build shaded BetterStructures JAR
+        run: ./gradlew shadowJar --no-daemon
 
       - name: Verify distributable JAR
         run: |
