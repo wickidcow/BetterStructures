@@ -9,6 +9,11 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:
+
+concurrency:
+  group: betterstructures-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 # Pin source-only dependencies so CI remains reproducible while their public
 # snapshot/release repositories catch up with Paper 26.2.
@@ -20,7 +25,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # Read is sufficient for PR validation. Write is only exercised by the
+      # conditional release step on master pushes or explicit manual runs.
+      contents: write
 
     steps:
       - name: Check out BetterStructures
@@ -89,7 +96,28 @@ jobs:
       - name: Build shaded BetterStructures JAR
         run: ./gradlew shadowJar --no-daemon
 
-      - name: Verify distributable JAR
+      - name: Prepare raw Albion JAR
         run: |
           test -f build/libs/BetterStructures.jar
-          ls -lh build/libs/BetterStructures.jar
+          cp build/libs/BetterStructures.jar build/libs/BetterStructures-2.6.3-Albion.jar
+          ls -lh build/libs/BetterStructures.jar build/libs/BetterStructures-2.6.3-Albion.jar
+
+      # GitHub Actions artifacts are archive downloads. Publish the actual .jar
+      # as a GitHub Release asset instead so it can be downloaded and dropped
+      # straight into the server's plugins directory without extracting a ZIP.
+      - name: Publish raw JAR release
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="betterstructures-2.6.3-albion-build-${GITHUB_RUN_NUMBER}"
+          TITLE="BetterStructures 2.6.3 Albion build ${GITHUB_RUN_NUMBER}"
+          JAR="build/libs/BetterStructures-2.6.3-Albion.jar"
+
+          RELEASE_FLAGS=(--target "$GITHUB_SHA" --title "$TITLE" --generate-notes --latest=false)
+          if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
+            RELEASE_FLAGS+=(--prerelease)
+          fi
+
+          gh release create "$TAG" "$JAR" "${RELEASE_FLAGS[@]}"
