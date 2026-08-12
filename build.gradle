@@ -24,7 +24,12 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
     compileOnly 'org.projectlombok:lombok:1.18.30'
 
-    implementation (group: 'com.magmaguy', name: 'MagmaCore', version: '2.2.0-SNAPSHOT'){
+    // BetterStructures only consumes MagmaCore's shared/core APIs. The full
+    // MagmaCore distribution also bundles version-specific NMS modules which
+    // BetterStructures never imports and which require locally provisioned
+    // Spigot server artifacts to compile. CI publishes the pinned upstream
+    // :core module to Maven Local before this build.
+    implementation (group: 'com.magmaguy', name: 'core', version: '2.2.0-SNAPSHOT'){
         changing = true
     }
     implementation group: 'org.bstats', name: 'bstats-bukkit', version: '2.2.1'
