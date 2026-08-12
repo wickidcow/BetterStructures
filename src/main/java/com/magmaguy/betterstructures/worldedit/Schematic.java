@@ -70,7 +70,7 @@ public final class Schematic {
     }
 
     public static boolean isBusy() {
-        return pasteInProgress || !PASTE_QUEUE.isEmpty();
+        return pasteInProgress || !PASTE_QUEUE.isEmpty() || FaweEditQueue.isBusy();
     }
 
     /**
@@ -112,12 +112,14 @@ public final class Schematic {
     }
 
     /**
-     * Direct FAWE/WorldEdit paste retained for explicit command and modular-world paths.
-     * Natural structure generation uses {@link #pasteSchematic} instead.
+     * Direct FAWE paste retained for small explicit/component paths that expect the edit
+     * to be complete when this method returns. FAWE is the required WorldEdit provider.
      */
     public static void paste(Clipboard clipboard, Location location) {
         World world = BukkitAdapter.adapt(location.getWorld());
         try (EditSession editSession = WorldEdit.getInstance().newEditSession(world)) {
+            editSession.setTrackingHistory(false);
+            editSession.setSideEffectApplier(SideEffectSet.none());
             Operation operation = new ClipboardHolder(clipboard)
                     .createPaste(editSession)
                     .to(BlockVector3.at(location.getBlockX(), location.getBlockY(), location.getBlockZ()))
@@ -156,9 +158,6 @@ public final class Schematic {
         }
     }
 
-    /**
-     * Compatibility overload for call sites that do not need a pre-paste callback.
-     */
     public static void pasteSchematic(
             Clipboard schematicClipboard,
             Location location,
@@ -231,11 +230,6 @@ public final class Schematic {
         return chunks;
     }
 
-    /**
-     * Loads/generates only a couple of structure chunks at a time. This is deliberately
-     * more conservative than issuing every getChunkAtAsync request at once because the
-     * Albion resource world already has significant generator/I/O load.
-     */
     private static void loadChunkBatch(
             PasteRequest request,
             org.bukkit.World world,
@@ -307,44 +301,35 @@ public final class Schematic {
             return;
         }
 
-        Bukkit.getScheduler().runTaskAsynchronously(MetadataHandler.PLUGIN, () -> {
-            Throwable failure = null;
-            try {
-                executeFawePaste(request, world);
-            } catch (Throwable throwable) {
-                failure = throwable;
-            }
+        String description = "natural structure at "
+                + request.location().getBlockX() + ","
+                + request.location().getBlockY() + ","
+                + request.location().getBlockZ();
 
-            Throwable finalFailure = failure;
-            Bukkit.getScheduler().runTask(MetadataHandler.PLUGIN, () -> {
-                try {
-                    if (finalFailure == null) {
-                        if (request.onComplete() != null) {
-                            request.onComplete().run();
+        FaweEditQueue.submit(description,
+                () -> executeFawePaste(request, world),
+                failure -> {
+                    try {
+                        if (failure == null) {
+                            if (request.onComplete() != null) {
+                                request.onComplete().run();
+                            }
+                        } else {
+                            Logger.warn("FAWE structure paste failed at "
+                                    + request.location().getBlockX() + ","
+                                    + request.location().getBlockY() + ","
+                                    + request.location().getBlockZ() + ": "
+                                    + failure.getMessage());
+                            failure.printStackTrace();
                         }
-                    } else {
-                        Logger.warn("FAWE structure paste failed at "
-                                + request.location().getBlockX() + ","
-                                + request.location().getBlockY() + ","
-                                + request.location().getBlockZ() + ": "
-                                + finalFailure.getMessage());
-                        finalFailure.printStackTrace();
+                    } finally {
+                        releaseTickets(world, ticketedChunks);
+                        pasteInProgress = false;
+                        processNextPaste();
                     }
-                } finally {
-                    releaseTickets(world, ticketedChunks);
-                    pasteInProgress = false;
-                    processNextPaste();
-                }
-            });
-        });
+                });
     }
 
-    /**
-     * Executes the full block loop on an async FAWE EditSession. BaseBlock is used for
-     * normal and NBT-rich blocks so chests, spawners, signs, etc. keep their schematic
-     * data. Barrier markers remain no-op, while bedrock retains BetterStructures'
-     * pedestal/filler semantics.
-     */
     private static void executeFawePaste(PasteRequest request, org.bukkit.World bukkitWorld)
             throws WorldEditException {
 
