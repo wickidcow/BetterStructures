@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Java 21
         uses: actions/setup-java@v5
@@ -55,13 +57,16 @@ jobs:
           VERSION="$(sed -n "s/^version = '\([^']*\)'.*/\1/p" build.gradle)"
           JAR="build/libs/BetterStructures-${VERSION}.jar"
           test -f "$JAR"
+          SHA256="$(sha256sum "$JAR" | awk '{print $1}')"
           echo "Built $JAR"
+          echo "SHA-256: $SHA256"
           echo "BS_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "BS_JAR=$JAR" >> "$GITHUB_ENV"
+          echo "BS_SHA256=$SHA256" >> "$GITHUB_ENV"
 
-      # This makes the JAR visible in the workflow run's Artifacts section.
-      # GitHub Actions artifact downloads are always wrapped by GitHub as a ZIP,
-      # so the raw, unzipped JAR is also published below as a release asset.
+      # GitHub's Actions artifact system displays the build on the workflow run.
+      # GitHub wraps artifact downloads in a ZIP; the raw JAR is also published
+      # automatically as the milestone prerelease asset below.
       - name: Upload JAR to workflow artifacts
         id: upload-jar
         uses: actions/upload-artifact@v4
@@ -72,7 +77,7 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - name: Publish raw branch-test JAR
+      - name: Publish milestone prerelease and raw JAR
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/agent/')
         shell: bash
         env:
@@ -82,23 +87,49 @@ jobs:
           VERSION="$BS_VERSION"
           JAR="$BS_JAR"
           TAG="albion-${VERSION}-test"
+          NOTES="release-notes-${VERSION}.md"
           test -f "$JAR"
 
-          # The test release is intentionally reusable. Move its tag to the exact
-          # commit that just passed audit/build/tests before replacing the raw JAR.
+          PREVIOUS_SHA=""
+          if git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null 2>&1; then
+            PREVIOUS_SHA="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          fi
+
+          {
+            echo "## BetterStructures Albion ${VERSION} — Milestone Build"
+            echo
+            echo "AlbionMC development build from commit \`${GITHUB_SHA}\`."
+            echo
+            echo "- **JAR:** \`BetterStructures-${VERSION}.jar\`"
+            echo "- **SHA-256:** \`${BS_SHA256}\`"
+            echo "- **CI:** ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- **Runtime target:** Paper 1.21.11+ with FastAsyncWorldEdit"
+            echo
+            echo "### Changes in this milestone build"
+            if [[ -n "$PREVIOUS_SHA" && "$PREVIOUS_SHA" != "$GITHUB_SHA" ]]; then
+              git log --no-merges --max-count=25 --pretty='- %s (`%h`)' "${PREVIOUS_SHA}..${GITHUB_SHA}"
+            else
+              git log --no-merges --max-count=25 --pretty='- %s (`%h`)' "origin/master..${GITHUB_SHA}"
+            fi
+            echo
+            echo "This is an automatically maintained prerelease for AlbionMC runtime testing. After successful live testing, the same version can be promoted to the final \`v${VERSION}\` release."
+          } > "$NOTES"
+
+          # Keep the reusable milestone tag on the exact commit that passed the
+          # audit, tests and JAR verification before publishing the asset.
           git tag -f "$TAG" "$GITHUB_SHA"
           git push origin "refs/tags/$TAG" --force
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$JAR" --clobber
             gh release edit "$TAG" \
-              --title "BetterStructures Albion ${VERSION} Test Build" \
-              --notes "AlbionMC development test build from commit ${GITHUB_SHA}. This is a prerelease for resource-world runtime testing before the final v${VERSION} release." \
+              --title "BetterStructures Albion ${VERSION} Milestone Build" \
+              --notes-file "$NOTES" \
               --prerelease
           else
             gh release create "$TAG" "$JAR" \
-              --title "BetterStructures Albion ${VERSION} Test Build" \
-              --notes "AlbionMC development test build from commit ${GITHUB_SHA}. This is a prerelease for resource-world runtime testing before the final v${VERSION} release." \
+              --title "BetterStructures Albion ${VERSION} Milestone Build" \
+              --notes-file "$NOTES" \
               --prerelease
           fi
 
@@ -111,12 +142,15 @@ jobs:
           {
             echo "## BetterStructures ${BS_VERSION}"
             echo
+            echo "**SHA-256:** \`${BS_SHA256}\`"
+            echo
             if [[ -n "${ARTIFACT_URL:-}" ]]; then
-              echo "- [Workflow artifact: BetterStructures-${BS_VERSION}.jar](${ARTIFACT_URL})"
+              echo "- [Actions build artifact: BetterStructures-${BS_VERSION}.jar](${ARTIFACT_URL})"
             fi
             if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/heads/agent/* ]]; then
               echo "- [Direct raw JAR: BetterStructures-${BS_VERSION}.jar](https://github.com/${GITHUB_REPOSITORY}/releases/download/albion-${BS_VERSION}-test/BetterStructures-${BS_VERSION}.jar)"
+              echo "- [Milestone release notes](https://github.com/${GITHUB_REPOSITORY}/releases/tag/albion-${BS_VERSION}-test)"
             fi
             echo
-            echo "The workflow artifact is shown in GitHub Actions; the release link is the raw .jar with no ZIP wrapper."
+            echo "The Actions artifact is visible on this run. For server use, the milestone release link provides the raw .jar with no ZIP wrapper."
           } >> "$GITHUB_STEP_SUMMARY"
