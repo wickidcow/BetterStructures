@@ -47,7 +47,9 @@ dependencies {
     testImplementation 'io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT'
     testImplementation 'org.mockbukkit.mockbukkit:mockbukkit-v1.21:4.110.0'
     testImplementation 'org.mockito:mockito-core:5.12.0'
-    testImplementation 'com.sk89q.worldedit:worldedit-bukkit:7.3.0'
+    // Tests exercise FAWE-specific clipboard/runtime code, so use the same provider
+    // BetterStructures requires in production instead of a separate WorldEdit runtime.
+    testImplementation 'com.fastasyncworldedit:FastAsyncWorldEdit-Bukkit:2.14.3'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
