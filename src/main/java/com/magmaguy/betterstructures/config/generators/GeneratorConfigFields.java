@@ -6,8 +6,11 @@ import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.magmacore.config.CustomConfigFields;
 import com.magmaguy.magmacore.thirdparty.CustomBiomeCompatibility;
 import com.magmaguy.magmacore.util.Logger;
+import io.papermc.paper.registry.RegistryAccess;
+import io.papermc.paper.registry.RegistryKey;
 import lombok.Getter;
 import lombok.Setter;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Biome;
 
@@ -186,19 +189,28 @@ public class GeneratorConfigFields extends CustomConfigFields {
             return null;
         }
 
-        // If already in namespace:key format, return as is (ensuring lowercase)
+        // Custom biome namespaces are intentionally accepted as-is. Their registries
+        // may be supplied by Terra/Iris/Terralith integrations after configuration load.
         if (biomeString.contains(":")) {
             return biomeString.toLowerCase(Locale.ROOT);
         }
 
-        // Handle vanilla biomes (convert from enum name to namespace:key format)
-        try {
-            Biome biome = Biome.valueOf(biomeString.toUpperCase(Locale.ROOT));
-            return "minecraft:" + biome.getKey().getKey();
-        } catch (IllegalArgumentException e) {
+        // Paper 26.2 represents vanilla biomes through the dynamic registry rather
+        // than the for-removal Biome enum valueOf path.
+        String normalizedBiome = biomeString.toLowerCase(Locale.ROOT);
+        NamespacedKey biomeKey = NamespacedKey.fromString(normalizedBiome);
+        if (biomeKey == null) {
             Logger.warn("Invalid biome name: " + biomeString);
             return null;
         }
+
+        Biome biome = RegistryAccess.registryAccess().getRegistry(RegistryKey.BIOME).get(biomeKey);
+        if (biome == null) {
+            Logger.warn("Invalid biome name: " + biomeString);
+            return null;
+        }
+
+        return biomeKey.toString();
     }
 
     public enum StructureType {
