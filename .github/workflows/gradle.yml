@@ -47,37 +47,22 @@ jobs:
           fi
           echo "FAWE-native audit passed: no direct Bukkit/NMS block writes found."
 
-      - name: Build and test
-        run: ./gradlew clean test shadowJar
-
-      - name: Verify versioned JAR
+      - name: Build and verify raw JAR
         shell: bash
         run: |
           set -euo pipefail
+          ./gradlew clean test shadowJar
           VERSION="$(sed -n "s/^version = '\([^']*\)'.*/\1/p" build.gradle)"
           JAR="build/libs/BetterStructures-${VERSION}.jar"
           test -f "$JAR"
           SHA256="$(sha256sum "$JAR" | awk '{print $1}')"
-          echo "Built $JAR"
+          echo "Built raw JAR: $JAR"
           echo "SHA-256: $SHA256"
           echo "BS_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "BS_JAR=$JAR" >> "$GITHUB_ENV"
           echo "BS_SHA256=$SHA256" >> "$GITHUB_ENV"
 
-      # GitHub's Actions artifact system displays the build on the workflow run.
-      # GitHub wraps artifact downloads in a ZIP; the raw JAR is also published
-      # automatically as the milestone prerelease asset below.
-      - name: Upload JAR to workflow artifacts
-        id: upload-jar
-        uses: actions/upload-artifact@v4
-        with:
-          name: BetterStructures-${{ env.BS_VERSION }}.jar
-          path: ${{ env.BS_JAR }}
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 30
-
-      - name: Publish milestone prerelease and raw JAR
+      - name: Publish raw JAR milestone release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/agent/')
         shell: bash
         env:
@@ -100,7 +85,7 @@ jobs:
             echo
             echo "AlbionMC development build from commit \`${GITHUB_SHA}\`."
             echo
-            echo "- **JAR:** \`BetterStructures-${VERSION}.jar\`"
+            echo "- **Raw JAR:** \`BetterStructures-${VERSION}.jar\`"
             echo "- **SHA-256:** \`${BS_SHA256}\`"
             echo "- **CI:** ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo "- **Runtime target:** Paper 1.21.11+ with FastAsyncWorldEdit"
@@ -112,11 +97,9 @@ jobs:
               git log --no-merges --max-count=25 --pretty='- %s (`%h`)' "origin/master..${GITHUB_SHA}"
             fi
             echo
-            echo "This is an automatically maintained prerelease for AlbionMC runtime testing. After successful live testing, the same version can be promoted to the final \`v${VERSION}\` release."
+            echo "This prerelease contains the raw server-ready JAR. No Actions artifact ZIP is created."
           } > "$NOTES"
 
-          # Keep the reusable milestone tag on the exact commit that passed the
-          # audit, tests and JAR verification before publishing the asset.
           git tag -f "$TAG" "$GITHUB_SHA"
           git push origin "refs/tags/$TAG" --force
 
@@ -133,24 +116,22 @@ jobs:
               --prerelease
           fi
 
-      - name: Add JAR links to workflow summary
+      - name: Add raw JAR link to workflow summary
         if: always() && env.BS_VERSION != ''
         shell: bash
-        env:
-          ARTIFACT_URL: ${{ steps.upload-jar.outputs.artifact-url }}
         run: |
           {
             echo "## BetterStructures ${BS_VERSION}"
             echo
             echo "**SHA-256:** \`${BS_SHA256}\`"
             echo
-            if [[ -n "${ARTIFACT_URL:-}" ]]; then
-              echo "- [Actions build artifact: BetterStructures-${BS_VERSION}.jar](${ARTIFACT_URL})"
-            fi
             if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/heads/agent/* ]]; then
-              echo "- [Direct raw JAR: BetterStructures-${BS_VERSION}.jar](https://github.com/${GITHUB_REPOSITORY}/releases/download/albion-${BS_VERSION}-test/BetterStructures-${BS_VERSION}.jar)"
-              echo "- [Milestone release notes](https://github.com/${GITHUB_REPOSITORY}/releases/tag/albion-${BS_VERSION}-test)"
+              echo "### [Download raw BetterStructures-${BS_VERSION}.jar](https://github.com/${GITHUB_REPOSITORY}/releases/download/albion-${BS_VERSION}-test/BetterStructures-${BS_VERSION}.jar)"
+              echo
+              echo "[Milestone release notes](https://github.com/${GITHUB_REPOSITORY}/releases/tag/albion-${BS_VERSION}-test)"
+              echo
+              echo "This is the actual .jar file. No extraction is required."
+            else
+              echo "Raw JAR built successfully at \`${BS_JAR}\`."
             fi
-            echo
-            echo "The Actions artifact is visible on this run. For server use, the milestone release link provides the raw .jar with no ZIP wrapper."
           } >> "$GITHUB_STEP_SUMMARY"
