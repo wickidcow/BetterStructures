@@ -1,9 +1,6 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-# This workflow will build a Java project with Gradle and cache/restore any dependencies to improve the workflow execution time
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-java-with-gradle
+# BetterStructures Albion fork CI
+# Paper 26.2 is the primary API/runtime target. Purpur and other Paper-compatible
+# forks consume the same plugin JAR.
 
 name: Java CI with Gradle
 
@@ -12,56 +9,119 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:
+
+concurrency:
+  group: betterstructures-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Pin source-only dependencies so CI remains reproducible while their public
+# snapshot/release repositories catch up with Paper 26.2.
+env:
+  MAGMACORE_REF: d80637de6fcb0f228fc2142c442d1de81ffad8ee
+  MOCKBUKKIT_REF: 55ceb39635aa2347ca55e4246b1df60ef0f6520b
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-
-    # Configure Gradle for optimal use in GitHub Actions, including caching of downloaded dependencies.
-    # See: https://github.com/gradle/actions/blob/main/setup-gradle/README.md
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@af1da67850ed9a4cedd57bfd976089dd991e2582 # v4.0.0
-
-    - name: Build with Gradle Wrapper
-      run: ./gradlew build
-
-    # NOTE: The Gradle Wrapper is the default and recommended way to run Gradle (https://docs.gradle.org/current/userguide/gradle_wrapper.html).
-    # If your project does not have the Gradle Wrapper configured, you can use the following configuration to run Gradle with a specified version.
-    #
-    # - name: Setup Gradle
-    #   uses: gradle/actions/setup-gradle@af1da67850ed9a4cedd57bfd976089dd991e2582 # v4.0.0
-    #   with:
-    #     gradle-version: '8.9'
-    #
-    # - name: Build with Gradle 8.9
-    #   run: gradle build
-
-  dependency-submission:
-
-    runs-on: ubuntu-latest
-    permissions:
+      # Read is sufficient for PR validation. Write is only exercised by the
+      # conditional release step on master pushes or explicit manual runs.
       contents: write
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
+      - name: Check out BetterStructures
+        uses: actions/checkout@v7
 
-    # Generates and submits a dependency graph, enabling Dependabot Alerts for all project dependencies.
-    # See: https://github.com/gradle/actions/blob/main/dependency-submission/README.md
-    - name: Generate and submit dependency graph
-      uses: gradle/actions/dependency-submission@af1da67850ed9a4cedd57bfd976089dd991e2582 # v4.0.0
+      - name: Check out pinned MagmaCore
+        uses: actions/checkout@v7
+        with:
+          repository: MagmaGuy/MagmaCore
+          ref: ${{ env.MAGMACORE_REF }}
+          path: .dependencies/MagmaCore
+
+      - name: Check out pinned MockBukkit 26.2
+        uses: actions/checkout@v7
+        with:
+          repository: MockBukkit/MockBukkit
+          ref: ${{ env.MOCKBUKKIT_REF }}
+          path: .dependencies/MockBukkit
+
+      # MagmaCore declares Gradle 9.0.0, but its repository does not commit the
+      # gradle-wrapper.jar. Install that exact Gradle version explicitly instead
+      # of relying on its incomplete wrapper checkout.
+      - name: Set up Gradle 9.0.0 for MagmaCore
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.0.0'
+
+      # BetterStructures only needs MagmaCore's shared/core API. Building the
+      # full MagmaCore distribution would also compile version-specific NMS
+      # projects which depend on local Spigot server artifacts and are not used
+      # by BetterStructures.
+      - name: Set up JDK 21 for MagmaCore core
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build pinned MagmaCore core dependency
+        run: gradle -p .dependencies/MagmaCore :core:publishToMavenLocal --no-daemon
+
+      # Paper 26.2, MockBukkit 26.2, and this BetterStructures fork target Java 25.
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      # Provision one modern Gradle distribution for both MockBukkit and
+      # BetterStructures. This avoids extra wrapper downloads during the build,
+      # which can otherwise turn a transient network EOF into a false compile failure.
+      - name: Set up Gradle 9.6.1 for Paper 26.2 build
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.6.1'
+
+      # Maven Central currently trails MockBukkit's official 26.2 branch. Build
+      # the exact upstream commit locally so the tests use Paper 26.2 registry
+      # data rather than booting a 1.21/26.1 mock against the 26.2 API.
+      - name: Build pinned MockBukkit 26.2 test runtime
+        run: gradle -p .dependencies/MockBukkit :publishToMavenLocal -x test --no-daemon
+
+      - name: Compile BetterStructures
+        run: gradle clean compileJava --no-daemon
+
+      - name: Run BetterStructures tests
+        run: gradle test --no-daemon
+
+      - name: Build shaded BetterStructures JAR
+        run: gradle shadowJar --no-daemon
+
+      - name: Prepare raw Albion JAR
+        run: |
+          test -f build/libs/BetterStructures.jar
+          cp build/libs/BetterStructures.jar build/libs/BetterStructures-2.6.3-Albion.jar
+          ls -lh build/libs/BetterStructures.jar build/libs/BetterStructures-2.6.3-Albion.jar
+
+      # GitHub Actions artifacts are archive downloads. Publish the actual .jar
+      # as a GitHub Release asset instead so it can be downloaded and dropped
+      # straight into the server's plugins directory without extracting a ZIP.
+      - name: Publish raw JAR release
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="betterstructures-2.6.3-albion-build-${GITHUB_RUN_NUMBER}"
+          TITLE="BetterStructures 2.6.3 Albion build ${GITHUB_RUN_NUMBER}"
+          JAR="build/libs/BetterStructures-2.6.3-Albion.jar"
+
+          RELEASE_FLAGS=(--target "$GITHUB_SHA" --title "$TITLE" --generate-notes)
+          if [[ "$GITHUB_REF" == "refs/heads/master" ]]; then
+            RELEASE_FLAGS+=(--latest)
+          else
+            RELEASE_FLAGS+=(--prerelease --latest=false)
+          fi
+
+          gh release create "$TAG" "$JAR" "${RELEASE_FLAGS[@]}"

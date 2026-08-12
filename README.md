@@ -10,6 +10,8 @@
 
 **This is an unofficial maintenance fork of BetterStructures created for a more focused modern Paper server environment.**
 
+**Maintained specifically for [AlbionMC.com](https://albionmc.com/) while preserving the identity and work of the original BetterStructures project.**
+
 </div>
 
 ---
@@ -65,6 +67,8 @@ This repository is a **downstream, unofficial maintenance fork** of **MagmaGuy/B
 
 Its purpose is deliberately narrow: provide a BetterStructures build maintained around a **modern Paper-focused server environment**, with compatibility, build, stability, and performance work appropriate for that environment.
 
+This fork is maintained specifically for **AlbionMC.com** and targets the server stack used there. Fork-specific work should remain focused on compatibility, performance, and integrations useful to that environment rather than changing BetterStructures into a different project.
+
 ### Fork goals
 
 - Keep the original BetterStructures gameplay and identity intact.
@@ -76,6 +80,48 @@ Its purpose is deliberately narrow: provide a BetterStructures build maintained 
 - Make it easy to identify which changes belong to this fork versus the original project.
 
 This fork is **not intended to become a competing general-purpose BetterStructures distribution**. If the official BetterStructures release already works perfectly for your server, you should use and support the official project.
+
+---
+
+## ⚡ AlbionMC build focus
+
+The current Albion fork is built around:
+
+- **Paper 26.2** as the primary compile/test baseline
+- **Java 25**
+- **FastAsyncWorldEdit (FAWE)** as the required structure-placement backend
+- **Purpur** and conventional Paper-compatible forks through Paper API compatibility
+- reduced version-specific/NMS coupling where supported APIs are available
+- optional integrations remaining optional rather than becoming hard dependencies
+
+FAWE supplies the WorldEdit API used for structure placement, replacing the old BetterStructures-specific native palette/NMS fast path in this fork.
+
+### Optional Slimefun loot
+
+Slimefun is optional. When installed, treasure configurations can reference registered Slimefun item IDs, including addon items.
+
+```yaml
+items:
+  rare:
+    weight: 25
+    items:
+      - slimefunItem: DAMASCUS_STEEL_INGOT
+        amount: 1-2
+        weight: 6
+      - slimefunItem: BANDAGE
+        amount: 1-2
+        weight: 5
+```
+
+An opt-in `treasure_slimefun.yml` table is included. It is not forced into existing BetterStructures loot tables.
+
+### Build output
+
+Validated builds produce a directly usable raw JAR named:
+
+`BetterStructures-2.6.3-Albion.jar`
+
+The release asset is a normal `.jar` and does not need to be extracted from a `.jar.zip` archive.
 
 ---
 
@@ -148,7 +194,7 @@ Nothing in this README removes, replaces, or limits the rights granted by the pr
 
 This repository is **not an official BetterStructures release** and is not maintained, endorsed, or supported by MagmaGuy unless he explicitly states otherwise.
 
-BetterStructures, Minecraft, Paper, WorldEdit, and other referenced project names and trademarks belong to their respective owners.
+BetterStructures, Minecraft, Paper, WorldEdit, FastAsyncWorldEdit, Slimefun, and other referenced project names and trademarks belong to their respective owners.
 
 **NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
 

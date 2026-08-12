@@ -19,10 +19,8 @@ import com.magmaguy.betterstructures.modules.WFCGenerator;
 import com.magmaguy.betterstructures.schematics.SchematicContainer;
 import com.magmaguy.betterstructures.thirdparty.EliteMobs;
 import com.magmaguy.betterstructures.thirdparty.WorldGuard;
-import com.magmaguy.easyminecraftgoals.NMSManager;
 import com.magmaguy.magmacore.MagmaCore;
 import com.magmaguy.magmacore.command.CommandManager;
-import com.magmaguy.magmacore.dlc.ConfigurationImporter;
 import com.magmaguy.magmacore.initialization.PluginInitializationConfig;
 import com.magmaguy.magmacore.initialization.PluginInitializationContext;
 import com.magmaguy.magmacore.initialization.PluginInitializationState;
@@ -40,6 +38,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 
@@ -61,7 +60,6 @@ public final class BetterStructures extends JavaPlugin {
         Bukkit.getLogger().info("  / __  / _ \\/ __/ __/ _ \\/ ___/\\__ \\/ __/ ___/ / / / ___/ __/ / / / ___/ _ \\/ ___/");
         Bukkit.getLogger().info(" / /_/ /  __/ /_/ /_/  __/ /   ___/ / /_/ /  / /_/ / /__/ /_/ /_/ / /  /  __(__  ) ");
         Bukkit.getLogger().info("/_____/\\___/\\__/\\__/\\___/_/   /____/\\__/_/   \\__,_/\\___/\\__/\\__,_/_/   \\___/____/");
-        // Plugin startup logic
         Bukkit.getLogger().info("[BetterStructures] Initialized version " + this.getDescription().getVersion() + "!");
         try {
             this.getConfig().save("config.yml");
@@ -115,7 +113,6 @@ public final class BetterStructures extends JavaPlugin {
             Bukkit.getLogger().info("[BetterStructures] Shutdown during initialization.");
             return;
         }
-        // Plugin shutdown logic
         SchematicContainer.shutdown();
         Bukkit.getServer().getScheduler().cancelTasks(MetadataHandler.PLUGIN);
         MagmaCore.shutdown(this);
@@ -132,9 +129,7 @@ public final class BetterStructures extends JavaPlugin {
         new ValidWorldsConfig();
 
         initializationContext.step("Content Importer");
-        ConfigurationImporter importer = MagmaCore.initializeImporter(this);
-        if (importer != null && importer.isEliteMobsContentImported())
-            EliteMobs.reloadAfterContentImport();
+        importPendingContent();
 
         initializationContext.step("Treasure Config");
         new TreasureConfig();
@@ -152,9 +147,29 @@ public final class BetterStructures extends JavaPlugin {
         new ContentPackageConfig();
     }
 
+    /**
+     * Current MagmaCore performs imports as a side effect and no longer returns a
+     * ConfigurationImporter/result object. Record whether BetterStructures had
+     * pending import payloads before invoking it so the EliteMobs bridge can still
+     * refresh newly imported bosses without reloading EliteMobs on every startup.
+     */
+    private void importPendingContent() {
+        boolean hadPendingImports = hasPendingImports();
+        MagmaCore.initializeImporter(this);
+        if (hadPendingImports) {
+            EliteMobs.reloadAfterContentImport();
+        }
+    }
+
+    private boolean hasPendingImports() {
+        File importsFolder = new File(getDataFolder(), "imports");
+        File[] pendingFiles = importsFolder.listFiles();
+        return pendingFiles != null && pendingFiles.length > 0;
+    }
+
     private void syncInitialization(PluginInitializationContext initializationContext) {
-        initializationContext.step("NMS Adapter");
-        NMSManager.initializeAdapter(this);
+        initializationContext.step("FastAsyncWorldEdit");
+        Logger.info("FastAsyncWorldEdit-backed structure placement enabled; version-specific MagmaCore NMS adapters are not required.");
 
         initializationContext.step("Components Folder");
         ComponentsConfigFolder.initialize();
@@ -217,9 +232,7 @@ public final class BetterStructures extends JavaPlugin {
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             try {
-                ConfigurationImporter importer = MagmaCore.initializeImporter(this);
-                if (importer != null && importer.isEliteMobsContentImported())
-                    EliteMobs.reloadAfterContentImport();
+                importPendingContent();
                 new TreasureConfig();
                 new GeneratorConfig();
                 new ModuleGeneratorsConfig();

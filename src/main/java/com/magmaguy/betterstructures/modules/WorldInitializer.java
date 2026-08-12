@@ -11,7 +11,9 @@ public class WorldInitializer {
     public static World generateWorld(String worldName, Player player) {
         WorldCreator worldCreator = new WorldCreator(worldName);
         worldCreator.environment(World.Environment.NORMAL);
-        worldCreator.keepSpawnInMemory(false);
+        // Paper 26.x no longer keeps spawn chunks permanently loaded, so the old
+        // WorldCreator#keepSpawnInMemory(false) option has been removed and is
+        // unnecessary for this temporary void world.
         worldCreator.generator(new VoidGenerator());
         World world = worldCreator.createWorld();
         world.setAutoSave(false);

@@ -2,7 +2,7 @@ plugins {
     id 'java-library'
     id 'idea'
     id 'maven-publish'
-    id "com.gradleup.shadow" version "9.0.0-beta12"
+    id "com.gradleup.shadow" version "9.6.1"
 }
 
 group = 'com.magmaguy'
@@ -11,10 +11,6 @@ version = '2.6.3'
 repositories {
     mavenCentral()
     mavenLocal()
-    maven {
-        name = 'spigotmc-repo'
-        url = 'https://hub.spigotmc.org/nexus/content/repositories/snapshots/'
-    }
     maven { url = 'https://repo.magmaguy.com/releases' }
     maven { url = "https://repo.magmaguy.com/snapshots" }
     maven { url = 'https://repo.codemc.org/repository/maven-public' }
@@ -25,10 +21,15 @@ repositories {
 }
 
 dependencies {
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
-    compileOnly 'org.projectlombok:lombok:1.18.30'
+    // Lombok 1.18.46 includes current JDK 25 fixes/support needed by this Java 25 build.
+    annotationProcessor 'org.projectlombok:lombok:1.18.46'
+    compileOnly 'org.projectlombok:lombok:1.18.46'
 
-    implementation (group: 'com.magmaguy', name: 'MagmaCore', version: '2.2.0-SNAPSHOT'){
+    // BetterStructures only consumes MagmaCore's shared/core APIs. The full
+    // MagmaCore distribution also bundles version-specific NMS modules which
+    // BetterStructures no longer imports. CI publishes the pinned upstream
+    // :core module to Maven Local before this build.
+    implementation (group: 'com.magmaguy', name: 'core', version: '2.2.0-SNAPSHOT'){
         changing = true
     }
     implementation group: 'org.bstats', name: 'bstats-bukkit', version: '2.2.1'
@@ -39,11 +40,18 @@ dependencies {
     compileOnly group: 'net.Indyuce', name: 'MMOItems-API', version: '6.9.2-SNAPSHOT'
     compileOnly group: 'com.sk89q.worldguard', name: 'worldguard-bukkit', version: '7.0.7'
     compileOnly group: 'com.sk89q.worldedit', name: 'worldedit-bukkit', version: '7.3.0'
-    compileOnly 'org.spigotmc:spigot-api:26.2-R0.1-SNAPSHOT'
 
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-    testImplementation 'io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT'
-    testImplementation 'org.mockbukkit.mockbukkit:mockbukkit-v1.21:4.110.0'
+    // Paper is the compile/runtime API target. Purpur and other Paper-compatible
+    // forks inherit this API without requiring fork-specific compile dependencies.
+    compileOnly 'io.papermc.paper:paper-api:26.2.build.+'
+
+    // MockBukkit's released Maven Central artifact still targets 26.1.2. CI
+    // publishes the official 26.2 branch at the pinned commit into Maven Local,
+    // so tests exercise the same Paper generation/API as production compilation.
+    testImplementation platform('org.junit:junit-bom:6.1.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'io.papermc.paper:paper-api:26.2.build.+'
+    testImplementation 'org.mockbukkit.mockbukkit:mockbukkit-v26.2:dev-55ceb39'
     testImplementation 'org.mockito:mockito-core:5.12.0'
     testImplementation group: 'com.sk89q.worldedit', name: 'worldedit-bukkit', version: '7.3.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -69,7 +77,6 @@ shadowJar {
     dependencies {
         relocate('org.bstats', packagePath + '.bstats')
     }
-    relocate 'com.magmaguy.easyminecraftgoals', 'com.magmaguy.betterstructures.easyminecraftgoals'
     // Relocate the shaded MagmaCore so its static singleton (and config-folder resolution via
     // MagmaCore.getInstance().getRequestingPlugin()) is isolated per plugin. Without this, every
     // plugin that ships MagmaCore unrelocated shares one instance/requestingPlugin, so their
@@ -100,6 +107,12 @@ tasks.withType(JavaCompile) {
 
 test {
     useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat = 'full'
+        showCauses = true
+        showStackTraces = true
+    }
 }
 
 ext {
@@ -110,7 +123,7 @@ ext {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21) // or your target version
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
