@@ -19,7 +19,6 @@ import com.magmaguy.betterstructures.modules.WFCGenerator;
 import com.magmaguy.betterstructures.schematics.SchematicContainer;
 import com.magmaguy.betterstructures.thirdparty.EliteMobs;
 import com.magmaguy.betterstructures.thirdparty.WorldGuard;
-import com.magmaguy.easyminecraftgoals.NMSManager;
 import com.magmaguy.magmacore.MagmaCore;
 import com.magmaguy.magmacore.command.CommandManager;
 import com.magmaguy.magmacore.dlc.ConfigurationImporter;
@@ -153,8 +152,8 @@ public final class BetterStructures extends JavaPlugin {
     }
 
     private void syncInitialization(PluginInitializationContext initializationContext) {
-        initializationContext.step("NMS Adapter");
-        NMSManager.initializeAdapter(this);
+        initializationContext.step("FastAsyncWorldEdit");
+        Logger.info("FastAsyncWorldEdit-backed structure placement enabled; version-specific MagmaCore NMS adapters are not required.");
 
         initializationContext.step("Components Folder");
         ComponentsConfigFolder.initialize();
