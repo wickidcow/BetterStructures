@@ -34,8 +34,13 @@ jobs:
           ref: ${{ env.MAGMACORE_REF }}
           path: .dependencies/MagmaCore
 
-      - name: Set up Gradle
+      # MagmaCore declares Gradle 9.0.0, but its repository does not commit the
+      # gradle-wrapper.jar. Install that exact Gradle version explicitly instead
+      # of relying on its incomplete wrapper checkout.
+      - name: Set up Gradle 9.0.0
         uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.0.0'
 
       # MagmaCore's current build targets Java 21. Build its complete shaded
       # distribution and publish it to Maven Local under the same
@@ -47,9 +52,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Build pinned MagmaCore dependency
-        run: |
-          chmod +x .dependencies/MagmaCore/gradlew
-          .dependencies/MagmaCore/gradlew -p .dependencies/MagmaCore :dist:publishToMavenLocal --no-daemon
+        run: gradle -p .dependencies/MagmaCore :dist:publishToMavenLocal --no-daemon
 
       # Paper 26.2 is a Java 25 server/API target for this fork.
       - name: Set up JDK 25 for BetterStructures
