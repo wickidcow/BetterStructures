@@ -42,25 +42,21 @@ jobs:
         with:
           gradle-version: '9.0.0'
 
-      # MagmaCore is a mixed-toolchain build. Its shared/core modules target
-      # Java 21 while nms:v26 explicitly requires a Java 25 compiler.
-      - name: Install JDK 25 toolchain
-        uses: actions/setup-java@v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: Set active JDK 21 for MagmaCore
+      # BetterStructures only needs MagmaCore's shared/core API. Building the
+      # full MagmaCore distribution would also compile version-specific NMS
+      # projects which depend on local Spigot server artifacts and are not used
+      # by BetterStructures.
+      - name: Set up JDK 21 for MagmaCore core
         uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Build pinned MagmaCore dependency
-        run: gradle -p .dependencies/MagmaCore :dist:publishToMavenLocal --no-daemon
+      - name: Build pinned MagmaCore core dependency
+        run: gradle -p .dependencies/MagmaCore :core:publishToMavenLocal --no-daemon
 
       # Paper 26.2 is a Java 25 server/API target for this fork.
-      - name: Set active JDK 25 for BetterStructures
+      - name: Set up JDK 25 for BetterStructures
         uses: actions/setup-java@v5
         with:
           java-version: '25'
