@@ -2,7 +2,7 @@ plugins {
     id 'java-library'
     id 'idea'
     id 'maven-publish'
-    id "com.gradleup.shadow" version "9.0.0-beta12"
+    id "com.gradleup.shadow" version "9.6.1"
 }
 
 group = 'com.magmaguy'
@@ -11,10 +11,6 @@ version = '2.7.0'
 repositories {
     mavenCentral()
     mavenLocal()
-    maven {
-        name = 'spigotmc-repo'
-        url = 'https://hub.spigotmc.org/nexus/content/repositories/snapshots/'
-    }
     maven { url = 'https://repo.magmaguy.com/releases' }
     maven { url = "https://repo.magmaguy.com/snapshots" }
     maven { url = 'https://repo.codemc.org/repository/maven-public' }
@@ -25,10 +21,14 @@ repositories {
 }
 
 dependencies {
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
-    compileOnly 'org.projectlombok:lombok:1.18.30'
+    // Current Lombok includes JDK 25 support needed by this Paper 26.2 build.
+    annotationProcessor 'org.projectlombok:lombok:1.18.46'
+    compileOnly 'org.projectlombok:lombok:1.18.46'
 
-    implementation (group: 'com.magmaguy', name: 'MagmaCore', version: '2.2.0-SNAPSHOT'){
+    // Keep the complete current MagmaCore dependency used by upstream 2.7.0.
+    // BetterStructures 2.7.0 consumes the new Nightbreak lifecycle/content APIs
+    // and the v26 adapter shipped by the same upstream library line.
+    implementation (group: 'com.magmaguy', name: 'MagmaCore', version: '2.2.0-SNAPSHOT') {
         changing = true
     }
     implementation group: 'org.bstats', name: 'bstats-bukkit', version: '2.2.1'
@@ -39,49 +39,50 @@ dependencies {
     compileOnly group: 'net.Indyuce', name: 'MMOItems-API', version: '6.9.2-SNAPSHOT'
     compileOnly group: 'com.sk89q.worldguard', name: 'worldguard-bukkit', version: '7.0.7'
     compileOnly group: 'com.sk89q.worldedit', name: 'worldedit-bukkit', version: '7.3.0'
-    compileOnly 'org.spigotmc:spigot-api:26.2-R0.1-SNAPSHOT'
-    //The server's logging backend, used only to collapse the per-block conversion errors Mojang's
-    //data converter emits while reading schematics (see SchematicConversionLog). compileOnly: the
-    //server always provides it, and a runtime without it degrades to the original output.
+
+    // Paper is the compile/runtime API target. Purpur and conventional
+    // Paper-compatible forks consume the same API surface.
+    compileOnly 'io.papermc.paper:paper-api:26.2.build.+'
+
+    // Used by upstream 2.7.0 to collapse noisy per-block data-conversion logs.
     compileOnly 'org.apache.logging.log4j:log4j-core:2.24.1'
+
+    testImplementation platform('org.junit:junit-bom:6.1.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'io.papermc.paper:paper-api:26.2.build.+'
+    testImplementation 'org.mockbukkit.mockbukkit:mockbukkit-v26.2:dev-55ceb39'
+    testImplementation 'org.mockito:mockito-core:5.12.0'
+    testImplementation group: 'com.sk89q.worldedit', name: 'worldedit-bukkit', version: '7.3.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-//This allows any modules tagged as changing to be updated every time, which is extremely convenient for some of the shaded libs
 configurations.all {
     resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
 }
 
-artifacts { // task 'build' runs generates uberjar
+artifacts {
     archives shadowJar
 }
 
 jar {
-    archiveClassifier.set('min') // we want the Uberjar to be distributed, this is the minified version
+    archiveClassifier.set('min')
 }
 
 String packagePath = 'com.magmaguy.shaded'
 
-// Relocating a Package
 shadowJar {
     dependencies {
         relocate('org.bstats', packagePath + '.bstats')
     }
     relocate 'com.magmaguy.easyminecraftgoals', 'com.magmaguy.betterstructures.easyminecraftgoals'
-    // Relocate the shaded MagmaCore so its static singleton (and config-folder resolution via
-    // MagmaCore.getInstance().getRequestingPlugin()) is isolated per plugin. Without this, every
-    // plugin that ships MagmaCore unrelocated shares one instance/requestingPlugin, so their
-    // configs (e.g. setupDone) collide in a single data folder and never persist per-plugin.
+    // Isolate MagmaCore's static state per shaded plugin so config and lifecycle
+    // state cannot collide with other MagmaGuy plugins on the same server.
     relocate 'com.magmaguy.magmacore', 'com.magmaguy.betterstructures.magmacore'
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     archiveClassifier.set(null)
     archiveFileName.set(project.name + ".jar")
 }
 
-// --- Shared dist mirror -----------------------------------------------------
-// Copy the finished shaded jar into the top-level dist/ folder so the testbeds
-// and the release tool pick every build up from one place. Gated on MC_DIST_DIR
-// (or -PmcDistDir) so clones/CI that don't set it just build to build/libs and
-// no machine-specific path is ever committed.
 def mcDistDir = System.getenv('MC_DIST_DIR') ?: project.findProperty('mcDistDir')
 if (mcDistDir) {
     tasks.register('mirrorToDist', Copy) {
@@ -95,6 +96,16 @@ tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
 }
 
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat = 'full'
+        showCauses = true
+        showStackTraces = true
+    }
+}
+
 ext {
     resourceTokens = [
             'Version': version
@@ -103,7 +114,7 @@ ext {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21) // or your target version
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
