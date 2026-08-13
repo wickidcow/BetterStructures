@@ -2,6 +2,7 @@ package com.magmaguy.betterstructures.worldedit;
 
 import com.magmaguy.betterstructures.MetadataHandler;
 import com.magmaguy.betterstructures.config.DefaultConfig;
+import com.magmaguy.betterstructures.util.LegacySchematicSanitizer;
 import com.magmaguy.betterstructures.util.WorldEditUtils;
 import com.magmaguy.magmacore.util.Logger;
 import com.sk89q.worldedit.EditSession;
@@ -29,14 +30,12 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Function;
 
 public class Schematic {
-    // Queue to hold pending paste operations
     private static final Queue<PasteOperation> pasteQueue = new ConcurrentLinkedQueue<>();
     private static boolean erroredOnce = false;
     private static boolean isDistributedPasting = false;
@@ -93,19 +92,24 @@ public class Schematic {
     private Schematic() {
     }
 
-    /**
-     * Loads a schematic from a file
-     *
-     * @param schematicFile The schematic file to load
-     * @return The loaded clipboard or null if loading failed
-     */
     public static Clipboard load(File schematicFile) {
         Clipboard clipboard;
-
         ClipboardFormat format = ClipboardFormats.findByFile(schematicFile);
 
-        try (ClipboardReader reader = format.getReader(new FileInputStream(schematicFile))) {
+        try (LegacySchematicSanitizer.SanitizedInput sanitizedInput = LegacySchematicSanitizer.open(schematicFile);
+             ClipboardReader reader = format.getReader(sanitizedInput.inputStream())) {
             clipboard = reader.read();
+            if (sanitizedInput.removedBedBlockEntities() > 0) {
+                Logger.info("Removed " + sanitizedInput.removedBedBlockEntities()
+                        + " obsolete minecraft:bed block-entity record(s) from "
+                        + schematicFile.getName() + " for Minecraft 26.2 compatibility.");
+            }
+            if (sanitizedInput.replacedBedPaletteEntries() > 0) {
+                Logger.info("Replaced " + sanitizedInput.replacedBedPaletteEntries()
+                        + " legacy minecraft:bed palette entr" +
+                        (sanitizedInput.replacedBedPaletteEntries() == 1 ? "y" : "ies")
+                        + " with minecraft:red_bed in " + schematicFile.getName() + ".");
+            }
         } catch (IOException e) {
             e.printStackTrace();
             return null;
@@ -124,19 +128,12 @@ public class Schematic {
         return clipboard;
     }
 
-    /**
-     * Pastes a schematic synchronously
-     *
-     * @param clipboard The WorldEdit clipboard containing the schematic
-     * @param location  The location to paste at
-     */
     public static void paste(Clipboard clipboard, Location location) {
         World world = BukkitAdapter.adapt(location.getWorld());
         try (EditSession editSession = WorldEdit.getInstance().newEditSession(world)) {
             Operation operation = new ClipboardHolder(clipboard)
                     .createPaste(editSession)
                     .to(BlockVector3.at(location.getX(), location.getY(), location.getZ()))
-                    // configure here
                     .build();
             Operations.complete(operation);
         } catch (WorldEditException e) {
@@ -166,16 +163,8 @@ public class Schematic {
         Material material = WorldEditUtils.adaptMaterial(blockState);
         Block worldBlock = adjustedLocation.clone().add(new Vector(x, y, z)).getBlock();
 
-        if (material == Material.BARRIER) {
-            // Special behavior: do not replace barriers.
-            return;
-        }
-        if (WorldEditUtils.isAir(blockState) && worldBlock.getType().isAir()) {
-            // Large schematics contain mostly empty volume. Avoid creating and
-            // queuing an AIR BlockData object when the destination is already
-            // air; interior air still carves existing terrain below.
-            return;
-        }
+        if (material == Material.BARRIER) return;
+        if (WorldEditUtils.isAir(blockState) && worldBlock.getType().isAir()) return;
 
         BlockData blockData = material == null ? null : WorldEditUtils.createBlockDataOrNull(baseBlock);
         if (blockData == null) {
@@ -205,15 +194,6 @@ public class Schematic {
         }
     }
 
-    /**
-     * Pastes a schematic using the provided pedestal material provider
-     *
-     * @param schematicClipboard The clipboard containing the schematic
-     * @param location The location to paste at
-     * @param schematicOffset The offset of the schematic
-     * @param pedestalMaterialProvider Function that provides pedestal material based on whether it's a surface block
-     * @param onComplete Callback to run when paste is complete
-     */
     public static void pasteSchematic(
             Clipboard schematicClipboard,
             Location location,
@@ -232,9 +212,6 @@ public class Schematic {
         if (!isDistributedPasting) processNextPaste();
     }
 
-    /**
-     * Processes the next paste operation in the queue
-     */
     private static void processNextPaste() {
         long maxNanosPerTick = Math.max(
                 (long) (50_000_000D * DefaultConfig.getPercentageOfTickUsedForPasting()),
@@ -335,16 +312,9 @@ public class Schematic {
         activePasteTask = null;
     }
 
-    /**
-     * Cancels every active and queued paste. This is required during reloads:
-     * Bukkit cancels the task, but it cannot clear this class' static cursor and
-     * queue by itself.
-     */
     public static void shutdown() {
         pasteQueue.clear();
-        if (activePasteTask != null) {
-            activePasteTask.cancel();
-        }
+        if (activePasteTask != null) activePasteTask.cancel();
         activePasteTask = null;
         activePasteOperation = null;
         isDistributedPasting = false;
@@ -352,9 +322,7 @@ public class Schematic {
 
     private interface PasteOperation {
         boolean hasNext();
-
         void pasteNext();
-
         void onComplete();
     }
 
