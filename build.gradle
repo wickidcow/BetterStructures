@@ -25,10 +25,10 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok:1.18.46'
     compileOnly 'org.projectlombok:lombok:1.18.46'
 
-    // Keep the complete current MagmaCore dependency used by upstream 2.7.0.
-    // BetterStructures 2.7.0 consumes the new Nightbreak lifecycle/content APIs
-    // and the v26 adapter shipped by the same upstream library line.
-    implementation (group: 'com.magmaguy', name: 'MagmaCore', version: '2.2.0-SNAPSHOT') {
+    // The Paper-focused fork uses MagmaCore's shared core APIs only. Modular
+    // structure placement is handled through WorldEdit/FAWE, so the upstream
+    // EasyMinecraftGoals/NMS adapter distribution is intentionally not shaded.
+    implementation (group: 'com.magmaguy', name: 'core', version: '2.2.0-SNAPSHOT') {
         changing = true
     }
     implementation group: 'org.bstats', name: 'bstats-bukkit', version: '2.2.1'
@@ -74,7 +74,6 @@ shadowJar {
     dependencies {
         relocate('org.bstats', packagePath + '.bstats')
     }
-    relocate 'com.magmaguy.easyminecraftgoals', 'com.magmaguy.betterstructures.easyminecraftgoals'
     // Isolate MagmaCore's static state per shaded plugin so config and lifecycle
     // state cannot collide with other MagmaGuy plugins on the same server.
     relocate 'com.magmaguy.magmacore', 'com.magmaguy.betterstructures.magmacore'
