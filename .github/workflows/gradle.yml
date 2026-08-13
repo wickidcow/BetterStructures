@@ -16,6 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Pin the MagmaCore revision that contains the BetterStructures 2.7.0
+  # Nightbreak/content lifecycle APIs, while publishing only its core module.
+  MAGMACORE_REF: 27ce503321359f158fb4874752378ea2e4d629df
   MOCKBUKKIT_REF: 55ceb39635aa2347ca55e4246b1df60ef0f6520b
 
 jobs:
@@ -28,12 +31,33 @@ jobs:
       - name: Check out BetterStructures
         uses: actions/checkout@v7
 
+      - name: Check out pinned MagmaCore
+        uses: actions/checkout@v7
+        with:
+          repository: MagmaGuy/MagmaCore
+          ref: ${{ env.MAGMACORE_REF }}
+          path: .dependencies/MagmaCore
+
       - name: Check out pinned MockBukkit 26.2
         uses: actions/checkout@v7
         with:
           repository: MockBukkit/MockBukkit
           ref: ${{ env.MOCKBUKKIT_REF }}
           path: .dependencies/MockBukkit
+
+      - name: Set up JDK 21 for MagmaCore
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Gradle 9.0 for MagmaCore
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.0.0'
+
+      - name: Publish pinned MagmaCore core to Maven Local
+        run: gradle -p .dependencies/MagmaCore :core:publishToMavenLocal --no-daemon
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
