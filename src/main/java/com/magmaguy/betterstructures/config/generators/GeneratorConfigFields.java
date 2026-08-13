@@ -6,8 +6,11 @@ import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.magmacore.config.CustomConfigFields;
 import com.magmaguy.magmacore.thirdparty.CustomBiomeCompatibility;
 import com.magmaguy.magmacore.util.Logger;
+import io.papermc.paper.registry.RegistryAccess;
+import io.papermc.paper.registry.RegistryKey;
 import lombok.Getter;
 import lombok.Setter;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Biome;
 
@@ -50,23 +53,10 @@ public class GeneratorConfigFields extends CustomConfigFields {
     @Setter
     private boolean generateLootInBarrels = true;
 
-    /**
-     * Used by plugin-generated files (defaults)
-     *
-     * @param filename The config filename
-     * @param isEnabled Whether the generator is enabled by default
-     */
     public GeneratorConfigFields(String filename, boolean isEnabled) {
         super(filename, isEnabled);
     }
 
-    /**
-     * Used by plugin-generated files (defaults) with structure types
-     *
-     * @param filename The config filename
-     * @param isEnabled Whether the generator is enabled by default
-     * @param structureTypes List of structure types
-     */
     public GeneratorConfigFields(String filename, boolean isEnabled, List<StructureType> structureTypes) {
         super(filename, isEnabled);
         this.structureTypes = structureTypes;
@@ -81,24 +71,17 @@ public class GeneratorConfigFields extends CustomConfigFields {
         this.validWorlds = processStringList("validWorlds", validWorlds, new ArrayList<>(), false);
         this.validWorldEnvironments = processEnumList("validWorldEnvironments", validWorldEnvironments, null, World.Environment.class, false);
 
-        // Process biomes
         processBiomes();
 
-        // Load treasure config
         this.treasureFilename = processString("treasureFilename", treasureFilename, null, false);
         TreasureConfigFields treasureConfig = TreasureConfig.getConfigFields(treasureFilename);
         if (treasureConfig != null) {
-            //Reuse the treasure config's own ChestContents (built once at treasure load) like the
-            //schematic config fields do; rolling never mutates the instance
             this.chestContents = treasureConfig.getChestContents();
         } else {
             Logger.warn("No valid treasure config file found for generator " + filename + " ! This will not spawn loot in chests until fixed.");
         }
 
-        // Per-generator barrel loot toggle (default ON)
         this.generateLootInBarrels = processBoolean("generateLootInBarrels", generateLootInBarrels, true, false);
-
-        // Load barrel treasure config (defaults to the food premade)
         this.barrelTreasureFilename = processString("barrelTreasureFilename", barrelTreasureFilename, "treasure_barrel_food.yml", false);
         if (generateLootInBarrels) {
             TreasureConfigFields barrelTreasureConfig = TreasureConfig.getConfigFields(barrelTreasureFilename);
@@ -110,30 +93,19 @@ public class GeneratorConfigFields extends CustomConfigFields {
         }
     }
 
-    /**
-     * Processes biome configuration and populates validBiomesNamespaces list.
-     * This method ensures all custom biome mappings are properly applied.
-     */
     private void processBiomes() {
-        // Initialize or clear the namespaces list
         if (validBiomesNamespaces == null) {
             validBiomesNamespaces = new ArrayList<>();
         } else {
             validBiomesNamespaces.clear();
         }
 
-        // Read biomes from config or use defaults
         if (fileConfiguration.contains("validBiomesV2") &&
                 !fileConfiguration.getList("validBiomesV2", new ArrayList<>()).isEmpty()) {
-
-            // Read biomes from config
             this.validBiomesStrings = processStringList("validBiomesV2", validBiomesStrings, validBiomesStrings, false);
         }
 
-        // Process biomes and their custom variants
         Set<String> processedBiomes = new HashSet<>();
-
-        // First pass: standardize all biome formats and collect default biomes
         List<String> standardizedBiomes = new ArrayList<>();
         for (String biomeString : validBiomesStrings) {
             String standardizedBiome = standardizeBiomeFormat(biomeString);
@@ -143,18 +115,12 @@ public class GeneratorConfigFields extends CustomConfigFields {
             }
         }
 
-        // Add all standard biomes to the namespaces list
         validBiomesNamespaces.addAll(standardizedBiomes);
 
-        // Second pass: collect all custom biomes that map to our default biomes
         List<String> customBiomes = new ArrayList<>();
         for (String standardizedBiome : standardizedBiomes) {
-            // Skip non-minecraft biomes (they're already custom)
-            if (!standardizedBiome.startsWith("minecraft:")) {
-                continue;
-            }
+            if (!standardizedBiome.startsWith("minecraft:")) continue;
 
-            // Add custom biomes that map to this default biome
             List<String> mappedCustomBiomes = CustomBiomeCompatibility.getCustomBiomes(standardizedBiome);
             for (String customBiome : mappedCustomBiomes) {
                 if (!processedBiomes.contains(customBiome)) {
@@ -164,43 +130,36 @@ public class GeneratorConfigFields extends CustomConfigFields {
             }
         }
 
-        // Add all custom biomes to both lists
         validBiomesNamespaces.addAll(customBiomes);
 
-        // If we're creating a new config or updating an existing one, save the full list
-        if (customBiomes.size() > 0) {
+        if (!customBiomes.isEmpty()) {
             List<String> fullBiomeList = new ArrayList<>(validBiomesStrings);
             fullBiomeList.addAll(customBiomes);
             validBiomesStrings = fullBiomeList;
             fileConfiguration.set("validBiomesV2", fullBiomeList);
         }
-
     }
 
-    /**
-     * Standardizes biome format to namespace:key format.
-     *
-     * @param biomeString The biome string to standardize
-     * @return The standardized biome string in namespace:key format, or null if invalid
-     */
     private String standardizeBiomeFormat(String biomeString) {
-        if (biomeString == null || biomeString.isEmpty()) {
-            return null;
-        }
+        if (biomeString == null || biomeString.isEmpty()) return null;
 
-        // If already in namespace:key format, return as is (ensuring lowercase)
-        if (biomeString.contains(":")) {
-            return biomeString.toLowerCase(Locale.ROOT);
-        }
+        // Custom biome namespaces may be supplied by Terra/Iris/Terralith after config load.
+        if (biomeString.contains(":")) return biomeString.toLowerCase(Locale.ROOT);
 
-        // Handle vanilla biomes (convert from enum name to namespace:key format)
-        try {
-            Biome biome = Biome.valueOf(biomeString.toUpperCase(Locale.ROOT));
-            return "minecraft:" + biome.getKey().getKey();
-        } catch (IllegalArgumentException e) {
+        String normalizedBiome = biomeString.toLowerCase(Locale.ROOT);
+        NamespacedKey biomeKey = NamespacedKey.fromString(normalizedBiome);
+        if (biomeKey == null) {
             Logger.warn("Invalid biome name: " + biomeString);
             return null;
         }
+
+        Biome biome = RegistryAccess.registryAccess().getRegistry(RegistryKey.BIOME).get(biomeKey);
+        if (biome == null) {
+            Logger.warn("Invalid biome name: " + biomeString);
+            return null;
+        }
+
+        return biomeKey.toString();
     }
 
     public enum StructureType {
