@@ -5,12 +5,16 @@ import com.magmaguy.betterstructures.config.treasures.TreasureConfig;
 import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.magmacore.config.CustomConfigFields;
 import com.magmaguy.magmacore.util.Logger;
+import io.papermc.paper.registry.RegistryAccess;
+import io.papermc.paper.registry.RegistryKey;
 import lombok.Getter;
 import lombok.Setter;
+import org.bukkit.NamespacedKey;
 import org.bukkit.block.Biome;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -49,7 +53,6 @@ public class ModulesConfigFields extends CustomConfigFields {
     private String compoundModule = null;
     private boolean isAutomaticallyPlaced = true;
 
-    //used to check if a config is either cloned or the same between two modules
     public UUID getUuid() {
         return clonedConfig == null ? uuid : clonedConfig.getUuid();
     }
@@ -58,12 +61,6 @@ public class ModulesConfigFields extends CustomConfigFields {
         return clonedConfig == null ? compoundModule : clonedConfig.getCompoundModule();
     }
 
-    /**
-     * Used by plugin-generated files (defaults)
-     *
-     * @param filename
-     * @param isEnabled
-     */
     public ModulesConfigFields(String filename, boolean isEnabled) {
         super(filename, isEnabled);
     }
@@ -174,15 +171,21 @@ public class ModulesConfigFields extends CustomConfigFields {
         this.downIsPassable = processBoolean("downIsPassable", downIsPassable, downIsPassable, true);
         this.moduleBiome = processString("biome", moduleBiome, moduleBiome, true);
         this.minecraftBiomeString = processString("minecraftBiome", minecraftBiomeString, minecraftBiomeString, true);
-        if (!minecraftBiomeString.equalsIgnoreCase("null"))
-            try {
-                this.minecraftBiome = Biome.valueOf(minecraftBiomeString.toUpperCase());
-            } catch (Exception e) {
+        if (!minecraftBiomeString.equalsIgnoreCase("null")) {
+            this.minecraftBiome = resolveMinecraftBiome(minecraftBiomeString);
+            if (this.minecraftBiome == null) {
                 Logger.warn("Biome " + minecraftBiomeString + " is not a valid biome! Fix it in " + filename);
             }
+        }
         this.cloneConfig = processString("cloneConfig", cloneConfig, cloneConfig, true);
         this.compoundModule = processString("compoundModule", compoundModule, compoundModule, true);
         this.isAutomaticallyPlaced = processBoolean("isAutomaticallyPlaced", isAutomaticallyPlaced, isAutomaticallyPlaced, true);
+    }
+
+    private Biome resolveMinecraftBiome(String biomeName) {
+        NamespacedKey biomeKey = NamespacedKey.fromString(biomeName.toLowerCase(Locale.ROOT));
+        if (biomeKey == null) return null;
+        return RegistryAccess.registryAccess().getRegistry(RegistryKey.BIOME).get(biomeKey);
     }
 
     public void validateClones() {
