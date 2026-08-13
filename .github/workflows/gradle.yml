@@ -15,30 +15,18 @@ concurrency:
   group: betterstructures-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Pin source-only dependencies so CI remains reproducible while their public
-# snapshot/release repositories catch up with Paper 26.2.
 env:
-  MAGMACORE_REF: d80637de6fcb0f228fc2142c442d1de81ffad8ee
   MOCKBUKKIT_REF: 55ceb39635aa2347ca55e4246b1df60ef0f6520b
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      # Read is sufficient for PR validation. Write is only exercised by the
-      # conditional release step on master pushes or explicit manual runs.
       contents: write
 
     steps:
       - name: Check out BetterStructures
         uses: actions/checkout@v7
-
-      - name: Check out pinned MagmaCore
-        uses: actions/checkout@v7
-        with:
-          repository: MagmaGuy/MagmaCore
-          ref: ${{ env.MAGMACORE_REF }}
-          path: .dependencies/MagmaCore
 
       - name: Check out pinned MockBukkit 26.2
         uses: actions/checkout@v7
@@ -47,45 +35,17 @@ jobs:
           ref: ${{ env.MOCKBUKKIT_REF }}
           path: .dependencies/MockBukkit
 
-      # MagmaCore declares Gradle 9.0.0, but its repository does not commit the
-      # gradle-wrapper.jar. Install that exact Gradle version explicitly instead
-      # of relying on its incomplete wrapper checkout.
-      - name: Set up Gradle 9.0.0 for MagmaCore
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: '9.0.0'
-
-      # BetterStructures only needs MagmaCore's shared/core API. Building the
-      # full MagmaCore distribution would also compile version-specific NMS
-      # projects which depend on local Spigot server artifacts and are not used
-      # by BetterStructures.
-      - name: Set up JDK 21 for MagmaCore core
-        uses: actions/setup-java@v5
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Build pinned MagmaCore core dependency
-        run: gradle -p .dependencies/MagmaCore :core:publishToMavenLocal --no-daemon
-
-      # Paper 26.2, MockBukkit 26.2, and this BetterStructures fork target Java 25.
       - name: Set up JDK 25
         uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: 'temurin'
 
-      # Provision one modern Gradle distribution for both MockBukkit and
-      # BetterStructures. This avoids extra wrapper downloads during the build,
-      # which can otherwise turn a transient network EOF into a false compile failure.
-      - name: Set up Gradle 9.6.1 for Paper 26.2 build
+      - name: Set up Gradle 9.6.1
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.6.1'
 
-      # Maven Central currently trails MockBukkit's official 26.2 branch. Build
-      # the exact upstream commit locally so the tests use Paper 26.2 registry
-      # data rather than booting a 1.21/26.1 mock against the 26.2 API.
       - name: Build pinned MockBukkit 26.2 test runtime
         run: gradle -p .dependencies/MockBukkit :publishToMavenLocal -x test --no-daemon
 
@@ -101,21 +61,18 @@ jobs:
       - name: Prepare raw Albion JAR
         run: |
           test -f build/libs/BetterStructures.jar
-          cp build/libs/BetterStructures.jar build/libs/BetterStructures-2.6.3-Albion.jar
-          ls -lh build/libs/BetterStructures.jar build/libs/BetterStructures-2.6.3-Albion.jar
+          cp build/libs/BetterStructures.jar build/libs/BetterStructures-2.7.0-Albion.jar
+          ls -lh build/libs/BetterStructures.jar build/libs/BetterStructures-2.7.0-Albion.jar
 
-      # GitHub's Actions artifact service always wraps downloads in a ZIP.
-      # To provide a genuinely raw .jar download, publish the jar as a GitHub
-      # Release asset and then surface its direct link in the Actions run summary.
       - name: Publish raw JAR release
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          TAG="betterstructures-2.6.3-albion-build-${GITHUB_RUN_NUMBER}"
-          TITLE="BetterStructures 2.6.3 Albion build ${GITHUB_RUN_NUMBER}"
-          JAR="build/libs/BetterStructures-2.6.3-Albion.jar"
+          TAG="betterstructures-2.7.0-albion-build-${GITHUB_RUN_NUMBER}"
+          TITLE="BetterStructures 2.7.0 Albion build ${GITHUB_RUN_NUMBER}"
+          JAR="build/libs/BetterStructures-2.7.0-Albion.jar"
 
           RELEASE_FLAGS=(--target "$GITHUB_SHA" --title "$TITLE" --generate-notes)
           if [[ "$GITHUB_REF" == "refs/heads/master" ]]; then
@@ -130,8 +87,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
         shell: bash
         run: |
-          TAG="betterstructures-2.6.3-albion-build-${GITHUB_RUN_NUMBER}"
-          JAR_NAME="BetterStructures-2.6.3-Albion.jar"
+          TAG="betterstructures-2.7.0-albion-build-${GITHUB_RUN_NUMBER}"
+          JAR_NAME="BetterStructures-2.7.0-Albion.jar"
           DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${JAR_NAME}"
           RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
 

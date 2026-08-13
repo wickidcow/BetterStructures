@@ -4,7 +4,6 @@ import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.betterstructures.util.ItemStackSerialization;
 import com.magmaguy.betterstructures.util.WeighedProbability;
 import com.magmaguy.magmacore.util.Logger;
-import lombok.Getter;
 import net.Indyuce.mmoitems.MMOItems;
 import net.Indyuce.mmoitems.api.item.mmoitem.MMOItem;
 import org.bukkit.Material;
@@ -19,9 +18,11 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public class ChestContents {
 
-    @Getter
     private final List<ChestRarity> chestRarities = new ArrayList<>();
     private final TreasureConfigFields treasureConfigFields;
+    private final HashMap<Integer, Double> rarityWeights = new HashMap<>();
+    private static boolean warnedNullRarityPick = false;
+    private static boolean warnedNullEntryPick = false;
 
     /*
     Entry format:
@@ -37,13 +38,15 @@ public class ChestContents {
         this.treasureConfigFields = treasureConfigFields;
         if (treasureConfigFields.getRawLoot() == null) return;
         processRarities(treasureConfigFields.getRawLoot());
+        for (int i = chestRarities.size() - 1; i >= 0; i--)
+            rarityWeights.put(i, chestRarities.get(i).chestWeight);
     }
 
     private Material getMaterial(String string) {
         Material material = Material.matchMaterial(string);
         if (material == null) {
-            Logger.warn("Invalid material detected! Problematic entry: " + string +
-                    " in configuration file " + treasureConfigFields.getFilename());
+            Logger.warn("Invalid material detected! Problematic entry: " + string
+                    + " in configuration file " + treasureConfigFields.getFilename());
         }
         return material;
     }
@@ -52,8 +55,8 @@ public class ChestContents {
         try {
             return Double.parseDouble(string);
         } catch (Exception exception) {
-            Logger.warn("Invalid double value detected! Problematic entry: " + string +
-                    " in configuration file " + treasureConfigFields.getFilename());
+            Logger.warn("Invalid double value detected! Problematic entry: " + string
+                    + " in configuration file " + treasureConfigFields.getFilename());
             return -1;
         }
     }
@@ -61,8 +64,8 @@ public class ChestContents {
     private void processRarities(Map<String, Object> rawChestEntries) {
         for (Map.Entry<String, Object> entry : rawChestEntries.entrySet()) {
             if (!(entry.getValue() instanceof MemorySection raritySection)) {
-                Logger.warn("Invalid rarity section '" + entry.getKey() + "' in configuration file " +
-                        treasureConfigFields.getFilename());
+                Logger.warn("Invalid rarity section '" + entry.getKey() + "' in configuration file "
+                        + treasureConfigFields.getFilename());
                 continue;
             }
 
@@ -72,19 +75,19 @@ public class ChestContents {
                 switch (innerEntry.getKey().toLowerCase(Locale.ROOT)) {
                     case "weight" -> weight = getWeight(innerEntry.getValue().toString());
                     case "items" -> chestEntries = processEntries((List<Map<String, ?>>) innerEntry.getValue());
-                    default -> Logger.warn("Failed to read key " + innerEntry.getKey() +
-                            " for configuration file " + treasureConfigFields.getFilename());
+                    default -> Logger.warn("Failed to read key " + innerEntry.getKey()
+                            + " for configuration file " + treasureConfigFields.getFilename());
                 }
             }
 
             if (weight <= 0) {
-                Logger.warn("Skipping rarity '" + entry.getKey() + "' in " + treasureConfigFields.getFilename() +
-                        " because its weight is not greater than zero.");
+                Logger.warn("Skipping rarity '" + entry.getKey() + "' in " + treasureConfigFields.getFilename()
+                        + " because its weight is not greater than zero.");
                 continue;
             }
             if (chestEntries == null || chestEntries.isEmpty()) {
-                Logger.warn("Skipping rarity '" + entry.getKey() + "' in " + treasureConfigFields.getFilename() +
-                        " because it contains no valid loot entries.");
+                Logger.warn("Skipping rarity '" + entry.getKey() + "' in " + treasureConfigFields.getFilename()
+                        + " because it contains no valid loot entries.");
                 continue;
             }
             chestRarities.add(new ChestRarity(weight, chestEntries));
@@ -93,10 +96,11 @@ public class ChestContents {
 
     private ItemStack getSerializedItemStack(Map<String, Object> deserializedItemStack, String string) {
         try {
-            return ItemStackSerialization.serializeItem(deserializedItemStack);
+            // 2.7.0 corrected this direction: config maps must be deserialized into ItemStacks.
+            return ItemStackSerialization.deserializeItem(deserializedItemStack);
         } catch (Exception ex) {
-            Logger.warn("Invalid serialized value detected! Problematic entry: " + string +
-                    " for configuration file " + treasureConfigFields.getFilename());
+            Logger.warn("Invalid serialized value detected! Problematic entry: " + string
+                    + " for configuration file " + treasureConfigFields.getFilename());
             ex.printStackTrace();
             return null;
         }
@@ -106,8 +110,8 @@ public class ChestContents {
         try {
             return Boolean.parseBoolean(string);
         } catch (Exception ex) {
-            Logger.warn("Invalid boolean value detected! Problematic entry: " + string +
-                    " for configuration file " + treasureConfigFields.getFilename());
+            Logger.warn("Invalid boolean value detected! Problematic entry: " + string
+                    + " for configuration file " + treasureConfigFields.getFilename());
             return false;
         }
     }
@@ -120,12 +124,13 @@ public class ChestContents {
             if (mmoitem == null) throw new NullPointerException("mmo item is null");
             return mmoitem.newBuilder().build();
         } catch (Exception ex) {
-            Logger.warn("Invalid mmo item detected! Problematic entry: " + string +
-                    " in " + treasureConfigFields.getFilename());
+            Logger.warn("Invalid mmo item detected! Problematic entry: " + string
+                    + " in " + treasureConfigFields.getFilename());
             return null;
         }
     }
 
+    @SuppressWarnings("unchecked")
     private List<ChestEntry> processEntries(List<Map<String, ?>> rawChestEntries) {
         List<ChestEntry> chestEntries = new ArrayList<>();
         if (rawChestEntries == null) return chestEntries;
@@ -141,8 +146,8 @@ public class ChestContents {
 
             for (Map.Entry<String, ?> entry : rawChestEntry.entrySet()) {
                 if (entry.getValue() == null) {
-                    Logger.warn("Null value for loot key '" + entry.getKey() + "' in " +
-                            treasureConfigFields.getFilename());
+                    Logger.warn("Null value for loot key '" + entry.getKey() + "' in "
+                            + treasureConfigFields.getFilename());
                     continue;
                 }
 
@@ -160,57 +165,50 @@ public class ChestContents {
                                 maxAmount = minAmount;
                             }
                         } catch (Exception exception) {
-                            Logger.warn("Invalid amount detected! Problematic entry: " + value +
-                                    " in file " + treasureConfigFields.getFilename());
+                            Logger.warn("Invalid amount detected! Problematic entry: " + value
+                                    + " in file " + treasureConfigFields.getFilename());
                         }
                     }
                     case "weight" -> weight = getWeight(value);
-                    // Support for MMOItems - original code by Carm
                     case "mmoitem", "mmoitems" -> itemStack = getMMOItemsItemStack(value);
-                    // Optional Slimefun/Slimefun-addon item by registered item ID.
-                    // Resolution is intentionally deferred until roll time so addon items
-                    // registered after BetterStructures startup are also supported.
                     case "slimefun", "slimefunitem", "slimefunitems", "sfitem" -> slimefunItemId = value.trim();
                     case "serialized" -> itemStack = getSerializedItemStack((Map<String, Object>) entry.getValue(), value);
                     case "procedurallygenerateenchantments" ->
                             procedurallyGeneratedEnchantments = getProcedurallyGeneratedEnchantments(value);
                     case "info" -> {
                     }
-                    default -> Logger.warn("Failed to read key " + entry.getKey() +
-                            " for configuration file " + treasureConfigFields.getFilename());
+                    default -> Logger.warn("Failed to read key " + entry.getKey()
+                            + " for configuration file " + treasureConfigFields.getFilename());
                 }
             }
 
             if (minAmount < 1 || maxAmount < minAmount) {
-                Logger.warn("Skipping invalid loot entry in " + treasureConfigFields.getFilename() +
-                        ": amount must be at least 1 and max must be >= min.");
+                Logger.warn("Skipping invalid loot entry in " + treasureConfigFields.getFilename()
+                        + ": amount must be at least 1 and max must be >= min.");
                 continue;
             }
             if (weight <= 0) {
-                Logger.warn("Skipping invalid loot entry in " + treasureConfigFields.getFilename() +
-                        ": weight must be greater than zero.");
+                Logger.warn("Skipping invalid loot entry in " + treasureConfigFields.getFilename()
+                        + ": weight must be greater than zero.");
                 continue;
             }
             if (material == null && itemStack == null && (slimefunItemId == null || slimefunItemId.isBlank())) {
-                Logger.warn("Skipping loot entry in " + treasureConfigFields.getFilename() +
-                        " because it has no valid material, serialized/MMOItem, or Slimefun item id.");
+                Logger.warn("Skipping loot entry in " + treasureConfigFields.getFilename()
+                        + " because it has no valid material, serialized/MMOItem, or Slimefun item id.");
                 continue;
             }
 
-            ChestEntry chestEntry = new ChestEntry(material, weight, minAmount, maxAmount, itemStack,
-                    slimefunItemId, procedurallyGeneratedEnchantments, treasureConfigFields);
-            chestEntries.add(chestEntry);
+            chestEntries.add(new ChestEntry(material, weight, minAmount, maxAmount, itemStack,
+                    slimefunItemId, procedurallyGeneratedEnchantments, treasureConfigFields));
         }
         return chestEntries;
     }
 
     public void rollChestContents(Container chest) {
-        // Roll custom loot if available
         if (!chestRarities.isEmpty()) {
             rollCustomLoot(chest);
         }
 
-        // Roll vanilla loot if available
         LootTables vanillaTreasure = treasureConfigFields.getVanillaTreasure();
         if (vanillaTreasure != null) {
             rollVanillaLoot(chest, vanillaTreasure);
@@ -220,15 +218,19 @@ public class ChestContents {
     private void rollCustomLoot(Container chest) {
         int amount = (int) Math.max(Math.ceil(ThreadLocalRandom.current().nextGaussian(
                 treasureConfigFields.getMean(), treasureConfigFields.getStandardDeviation())), 0);
-        // Guarantee that at least one item will drop
         amount++;
 
-        HashMap<Integer, Double> weightsMap = new HashMap<>();
-        for (int i = chestRarities.size() - 1; i >= 0; i--)
-            weightsMap.put(i, chestRarities.get(i).chestWeight);
-
         for (int i = 0; i < amount; i++) {
-            ItemStack itemStack = chestRarities.get(WeighedProbability.pickWeightedProbability(weightsMap)).rollLoot();
+            Integer rarityIndex = WeighedProbability.pickWeightedProbability(rarityWeights);
+            if (rarityIndex == null) {
+                if (!warnedNullRarityPick) {
+                    warnedNullRarityPick = true;
+                    Logger.warn("Could not pick a loot rarity for treasure file " + treasureConfigFields.getFilename()
+                            + " ! Check that its rarity weights are positive numbers. This will only be warned about once.");
+                }
+                return;
+            }
+            ItemStack itemStack = chestRarities.get(rarityIndex).rollLoot();
             if (itemStack != null) {
                 placeItemInChest(chest, itemStack);
             }
@@ -260,19 +262,27 @@ public class ChestContents {
     private class ChestRarity {
         private final double chestWeight;
         private final List<ChestEntry> chestEntries;
+        private final HashMap<Integer, Double> entryWeights = new HashMap<>();
 
         public ChestRarity(double chestWeight, List<ChestEntry> chestEntries) {
             this.chestEntries = chestEntries;
             this.chestWeight = chestWeight;
+            for (int i = chestEntries.size() - 1; i >= 0; i--)
+                entryWeights.put(i, chestEntries.get(i).getWeight());
         }
 
         public ItemStack rollLoot() {
             if (chestEntries.isEmpty()) return null;
-
-            HashMap<Integer, Double> weightsMap = new HashMap<>();
-            for (int i = chestEntries.size() - 1; i >= 0; i--)
-                weightsMap.put(i, chestEntries.get(i).getWeight());
-            return chestEntries.get(WeighedProbability.pickWeightedProbability(weightsMap)).rollEntry();
+            Integer entryIndex = WeighedProbability.pickWeightedProbability(entryWeights);
+            if (entryIndex == null) {
+                if (!warnedNullEntryPick) {
+                    warnedNullEntryPick = true;
+                    Logger.warn("Could not pick a loot entry for treasure file " + treasureConfigFields.getFilename()
+                            + " ! Check that its item weights are positive numbers. This will only be warned about once.");
+                }
+                return null;
+            }
+            return chestEntries.get(entryIndex).rollEntry();
         }
     }
 }

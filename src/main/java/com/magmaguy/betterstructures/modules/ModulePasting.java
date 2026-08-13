@@ -9,6 +9,7 @@ import com.magmaguy.betterstructures.config.modules.ModulesConfigFields;
 import com.magmaguy.betterstructures.config.treasures.TreasureConfig;
 import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.betterstructures.util.WorldEditUtils;
+import com.magmaguy.easyminecraftgoals.NMSManager;
 import com.magmaguy.magmacore.util.Logger;
 import com.magmaguy.magmacore.util.SpigotMessage;
 import com.magmaguy.magmacore.util.WorkloadRunnable;
@@ -29,7 +30,10 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Container;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Directional;
+import org.bukkit.block.data.Rail;
 import org.bukkit.block.data.type.Chest;
+import org.bukkit.block.data.type.Sign;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -37,13 +41,23 @@ import org.bukkit.entity.Player;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 public final class ModulePasting {
+    private static final EnumSet<Material> SIGN_MATERIALS = EnumSet.noneOf(Material.class);
+
+    static {
+        //Locale.ROOT: the default-locale lowercase turns "SIGN" into "sıgn" on Turkish locales
+        for (Material m : Material.values())
+            if (m.toString().toUpperCase(Locale.ROOT).contains("SIGN")) SIGN_MATERIALS.add(m);
+    }
+
     private final List<InterpretedSign> interpretedSigns = new ArrayList<>();
     private final List<ChestPlacement> chestsToPlace = new ArrayList<>();
     private final List<BarrelPlacement> barrelsToFill = new ArrayList<>();
@@ -70,8 +84,6 @@ public final class ModulePasting {
                 firstNode.getWfcGenerator().getModuleGeneratorsConfigFields().isWorldGeneration();
 
         batchPaste(WFCNodeDeque, interpretedSigns);
-
-        createModularWorld(world, worldFolder);
 
         // Send notification to players
         if (DefaultConfig.isNewBuildingWarn()) {
@@ -129,7 +141,7 @@ public final class ModulePasting {
         int baseY = location.getBlockY();
         int baseZ = location.getBlockZ();
 
-        // FAWE provides the WorldEdit API and accelerates this edit-session path at runtime.
+        // Create edit session for actual placement
         com.sk89q.worldedit.world.World adaptedWorld = BukkitAdapter.adapt(world);
 
         try (EditSession editSession = WorldEdit.getInstance().newEditSession(adaptedWorld)) {
@@ -158,7 +170,8 @@ public final class ModulePasting {
                 }
             });
 
-            pasteArmorStands(transformedClipboard, location, rotation);
+            //The clipboard is already rotated; going through pasteArmorStands() would rotate it twice
+            WorldEditUtils.pasteArmorStandsOnlyFromTransformed(transformedClipboard, location);
 
         } catch (Exception e) {
             Logger.warn("Failed to paste structure: " + e.getMessage());
@@ -185,21 +198,11 @@ public final class ModulePasting {
         WorldEditUtils.pasteArmorStandsOnlyFromTransformed(transformedClipboard, location);
     }
 
-    private List<Pasteable> generatePasteMeList(Clipboard clipboard,
+    private List<Pasteable> generatePasteMeList(Clipboard transformedClipboard,
                                                 Location worldPasteOriginLocation,
-                                                Integer rotation,
                                                 List<InterpretedSign> interpretedSigns,
                                                 ModulesConfigFields modulesConfigFields) {
         List<Pasteable> pasteableList = new ArrayList<>();
-
-        // Apply rotation transformation
-        AffineTransform transform = new AffineTransform().rotateY(normalizeRotation(rotation));
-        Clipboard transformedClipboard;
-        try {
-            transformedClipboard = clipboard.transform(transform);
-        } catch (WorldEditException e) {
-            throw new RuntimeException(e);
-        }
 
         // Get the minimum point of the transformed clipboard to use as reference
         BlockVector3 minPoint = transformedClipboard.getMinimumPoint();
@@ -235,7 +238,7 @@ public final class ModulePasting {
             }
 
             // Handle signs - collect instructions then turn into AIR
-            if (blockData.getMaterial().toString().toLowerCase().contains("sign")) {
+            if (SIGN_MATERIALS.contains(blockData.getMaterial())) {
                 List<String> lines = getLines(baseBlock);
                 interpretedSigns.add(new InterpretedSign(pasteLocation, lines));
 
@@ -249,9 +252,9 @@ public final class ModulePasting {
                             Logger.warn("Invalid entity type in sign: " + lines.get(1));
                         }
                     } else if (line.contains("[chest]")) {
-                        chestsToPlace.add(new ChestPlacement(pasteLocation, Material.CHEST, rotation));
+                        chestsToPlace.add(new ChestPlacement(pasteLocation, Material.CHEST));
                     } else if (line.contains("[trapped_chest]")) {
-                        chestsToPlace.add(new ChestPlacement(pasteLocation, Material.TRAPPED_CHEST, rotation));
+                        chestsToPlace.add(new ChestPlacement(pasteLocation, Material.TRAPPED_CHEST));
                     }
                 }
 
@@ -292,7 +295,7 @@ public final class ModulePasting {
         return strings;
     }
 
-    public List<InterpretedSign> batchPaste(Deque<WFCNode> WFCNodeDeque, List<InterpretedSign> interpretedSigns) {
+    private void batchPaste(Deque<WFCNode> WFCNodeDeque, List<InterpretedSign> interpretedSigns) {
         List<Pasteable> pasteableList = new ArrayList<>();
 
         // Collect entity paste info while processing blocks
@@ -304,122 +307,76 @@ public final class ModulePasting {
             Clipboard clipboard = WFCNode.getModulesContainer().getClipboard();
             if (clipboard == null) continue;
 
+            // Rotate the clipboard once and reuse it for both the block paste list and the entity paste
+            AffineTransform transform = new AffineTransform().rotateY(normalizeRotation(WFCNode.getModulesContainer().getRotation()));
+            Clipboard transformedClipboard;
+            try {
+                transformedClipboard = clipboard.transform(transform);
+            } catch (WorldEditException e) {
+                throw new RuntimeException(e);
+            }
+
             // Process blocks
             ModulesConfigFields modulesConfigField = WFCNode.getModulesContainer().getModulesConfigField();
-            pasteableList.addAll(generatePasteMeList(clipboard, WFCNode.getRealLocation(startLocation),
-                    WFCNode.getModulesContainer().getRotation(), interpretedSigns, modulesConfigField));
+            pasteableList.addAll(generatePasteMeList(transformedClipboard, WFCNode.getRealLocation(startLocation),
+                    interpretedSigns, modulesConfigField));
 
             // Store entity paste info for later - WITH TRANSFORMED CLIPBOARD
-            AffineTransform transform = new AffineTransform().rotateY(normalizeRotation(WFCNode.getModulesContainer().getRotation()));
-            try {
-                Clipboard transformedClipboard = clipboard.transform(transform);
-                entityPasteInfos.add(new EntityPasteInfo(transformedClipboard, WFCNode.getRealLocation(startLocation),
-                        WFCNode.getModulesContainer().getRotation()));
-            } catch (WorldEditException e) {
-                Logger.warn("Failed to transform clipboard for entities: " + e.getMessage());
-            }
+            entityPasteInfos.add(new EntityPasteInfo(transformedClipboard, WFCNode.getRealLocation(startLocation)));
         }
 
-        // When generating structures into a world, use one WorldEdit edit session for every
-        // ordinary block. At runtime FAWE accelerates this path and keeps block-state ordering
-        // coherent. Mixing Bukkit setBlockData calls into an active FAWE paste can leave Paper
-        // with a pending chest/spawner block entity while the block is still observed as air.
-        final EditSession fastEditSession;
-        if (this.createModularWorld) {
-            fastEditSession = WorldEdit.getInstance().newEditSession(BukkitAdapter.adapt(world));
-            fastEditSession.setTrackingHistory(false);
-            fastEditSession.setSideEffectApplier(SideEffectSet.none());
-        } else {
-            fastEditSession = null;
-        }
-
-        // Bukkit placement is now a true fallback only. It is never interleaved with the FAWE
-        // session; fallback work begins after the edit session has been closed.
-        List<Pasteable> fallbackBlocks = new ArrayList<>();
-
+        List<Pasteable> slowBlocks = new ArrayList<>();
         WorkloadRunnable pasteMeRunnable = new WorkloadRunnable(.1, () -> {
-            if (fastEditSession != null) {
-                try {
-                    fastEditSession.close();
-                } catch (Exception e) {
-                    Logger.warn("Failed to close FAWE structure paste session cleanly: " + e.getMessage());
-                }
-            }
-
-            if (fallbackBlocks.isEmpty()) {
-                // Cross a tick boundary after closing FAWE before touching NBT/container state.
-                Bukkit.getScheduler().runTask(MetadataHandler.PLUGIN,
-                        () -> postPasteProcessing(entityPasteInfos));
-                return;
-            }
-
-            WorkloadRunnable fallbackPlacementRunnable = new WorkloadRunnable(.1, () -> {
-                // The fallback queue is complete and FAWE is already closed; NBT work can now
-                // begin without a Bukkit/FAWE block-state race.
+            WorkloadRunnable vanillaPlacementRunnable = new WorkloadRunnable(.1, () -> {
                 postPasteProcessing(entityPasteInfos);
             });
 
-            for (Pasteable fallbackBlock : fallbackBlocks) {
-                fallbackPlacementRunnable.addWorkload(() -> {
-                    try {
-                        fallbackBlock.location.getBlock().setBlockData(fallbackBlock.blockData, false);
-                    } catch (Exception e) {
-                        Logger.warn("Bukkit fallback placement failed at " + fallbackBlock.location + ": " + e.getMessage());
-                    }
+            for (Pasteable slowBlock : slowBlocks)
+                vanillaPlacementRunnable.addWorkload(() -> {
+                    slowBlock.location.getBlock().setBlockData(slowBlock.blockData, false);
                 });
-            }
-            fallbackPlacementRunnable.runTaskTimer(MetadataHandler.PLUGIN, 1, 1);
+            vanillaPlacementRunnable.runTaskTimer(MetadataHandler.PLUGIN, 0, 1);
         });
 
-        List<InterpretedSign> freshlyInterpretedSigns = new ArrayList<>();
-
-        // Enable FAWE fast path for world-based generation. Non-world generation retains the
-        // original Bukkit behavior, but still runs as one isolated phase.
+        // Enable fast path only for world-based generation
         final boolean fastPathEnabled = this.createModularWorld;
 
         for (Pasteable pasteable : pasteableList) {
             if (!fastPathEnabled) {
-                fallbackBlocks.add(pasteable);
+                // Not world-based generation: force slow placement for EVERYTHING
+                slowBlocks.add(pasteable);
                 continue;
             }
 
-            final BlockState worldEditState;
-            try {
-                worldEditState = BukkitAdapter.adapt(pasteable.blockData);
-            } catch (RuntimeException e) {
-                Logger.warn("Could not adapt block data for FAWE at " + pasteable.location + ": " + e.getMessage());
-                fallbackBlocks.add(pasteable);
-                continue;
+            // World-based generation: keep original split between fast/slow
+            if (pasteable.blockData.getLightEmission() > 0
+                    || pasteable.blockData instanceof Directional
+                    || pasteable.blockData instanceof Rail
+                    || pasteable.blockData instanceof Sign) {
+                slowBlocks.add(pasteable);
+            } else {
+                pasteMeRunnable.addWorkload(() -> {
+                    NMSManager.getAdapter().setBlockInNativeDataPalette(
+                            pasteable.location.getWorld(),
+                            pasteable.location.getBlockX(),
+                            pasteable.location.getBlockY(),
+                            pasteable.location.getBlockZ(),
+                            pasteable.blockData,
+                            true);
+                });
             }
-
-            if (worldEditState == null) {
-                fallbackBlocks.add(pasteable);
-                continue;
-            }
-
-            pasteMeRunnable.addWorkload(() -> {
-                try {
-                    fastEditSession.setBlock(
-                            BlockVector3.at(
-                                    pasteable.location.getBlockX(),
-                                    pasteable.location.getBlockY(),
-                                    pasteable.location.getBlockZ()),
-                            worldEditState);
-                } catch (WorldEditException | RuntimeException e) {
-                    Logger.warn("FAWE placement failed at " + pasteable.location + ": " + e.getMessage());
-                    fallbackBlocks.add(pasteable);
-                }
-            });
         }
 
         pasteMeRunnable.runTaskTimer(MetadataHandler.PLUGIN, 0, 1);
-
-        return freshlyInterpretedSigns;
     }
 
     private void postPasteProcessing(List<EntityPasteInfo> entityPasteInfos) {
-        // Paste deferred NBT-rich blocks (dispenser, spawner, etc.) with WorldEdit/FAWE so NBT
-        // is preserved. The ordinary-block session has already been closed before this starts.
+        if (createModularWorld) {
+            createModularWorld(world, worldFolder);
+            modularWorld.spawnOtherEntities();
+        }
+
+        // 1) Paste deferred NBT-rich blocks (dispenser, spawner, etc.) with WE so NBT is preserved
         if (!nbtToPlace.isEmpty()) {
             com.sk89q.worldedit.world.World adaptedWorld = BukkitAdapter.adapt(world);
             try (EditSession editSession = WorldEdit.getInstance().newEditSession(adaptedWorld)) {
@@ -441,48 +398,38 @@ public final class ModulePasting {
             } catch (Exception e) {
                 Logger.warn("Failed NBT post-paste session: " + e.getMessage());
             }
-
-            // FAWE may finalize queued block-entity data as its edit session closes. Do not let
-            // Bukkit immediately query/update those same chunks in that transition. Continue on
-            // the next server tick so Paper sees the matching base block before its block entity.
-            Bukkit.getScheduler().runTask(MetadataHandler.PLUGIN,
-                    () -> finishPostPasteProcessing(entityPasteInfos));
-            return;
         }
 
-        finishPostPasteProcessing(entityPasteInfos);
-    }
-
-    private void finishPostPasteProcessing(List<EntityPasteInfo> entityPasteInfos) {
-        if (createModularWorld) {
-            createModularWorld(world, worldFolder);
-            modularWorld.spawnOtherEntities();
-        }
-
-        // Paste entities from schematics (armor stands, etc.)
+        // 2) Paste entities from schematics (armor stands, etc.)
         pasteArmorStandsForBatch(entityPasteInfos);
 
-        for (ChestPlacement chestPlacement : chestsToPlace) {
-            Block block = chestPlacement.location.getBlock();
-            block.setType(chestPlacement.material);
+        // 3) Fill chests placed by [chest]/[trapped_chest] signs
+        if (!chestsToPlace.isEmpty()) {
+            // Loop-invariant: every chest here uses the generator's treasure file, so resolve it
+            // once (the barrel loop below already memoizes the same way)
+            String treasureFilename = moduleGeneratorsConfigFields.getTreasureFile();
+            TreasureConfigFields treasureConfigFields = TreasureConfig.getConfigFields(treasureFilename);
+            ChestContents chestContents = treasureConfigFields == null ? null : treasureConfigFields.getChestContents();
+            for (ChestPlacement chestPlacement : chestsToPlace) {
+                Block block = chestPlacement.location.getBlock();
+                block.setType(chestPlacement.material);
 
-            if (block.getBlockData() instanceof Chest chest) {
-                block.setBlockData(chest, false);
+                if (block.getBlockData() instanceof Chest chest) {
+                    block.setBlockData(chest, false);
 
-                String treasureFilename = moduleGeneratorsConfigFields.getTreasureFile();
-                TreasureConfigFields treasureConfigFields = TreasureConfig.getConfigFields(treasureFilename);
-                if (treasureConfigFields != null) {
-                    ChestContents chestContents = new ChestContents(treasureConfigFields);
-                    Container container = (Container) block.getState();
-                    chestContents.rollChestContents(container);
-                    ChestFillEvent chestFillEvent = new ChestFillEvent(container, treasureFilename);
-                    Bukkit.getServer().getPluginManager().callEvent(chestFillEvent);
-                    if (!chestFillEvent.isCancelled())
-                        container.update(true);
+                    if (chestContents != null) {
+                        Container container = (Container) block.getState();
+                        chestContents.rollChestContents(container);
+                        ChestFillEvent chestFillEvent = new ChestFillEvent(container, treasureFilename);
+                        Bukkit.getServer().getPluginManager().callEvent(chestFillEvent);
+                        if (!chestFillEvent.isCancelled())
+                            container.update(true);
+                    }
                 }
             }
         }
 
+        // 4) Fill barrels with loot
         if (moduleGeneratorsConfigFields.isGenerateLootInBarrels() && !barrelsToFill.isEmpty()) {
             Map<String, ChestContents> contentsByTreasure = new HashMap<>();
             Set<String> warnedMissingTreasures = new HashSet<>();
@@ -521,7 +468,7 @@ public final class ModulePasting {
             }
         }
 
-        // Spawn entities last
+        // 5) Spawn entities last
         for (EntitySpawn entitySpawn : entitiesToSpawn) {
             try {
                 LivingEntity entity = (LivingEntity) world.spawnEntity(entitySpawn.location, entitySpawn.entityType);
@@ -552,10 +499,10 @@ public final class ModulePasting {
     }
 
     // Record to hold entity paste information - now with transformed clipboard
-    private record EntityPasteInfo(Clipboard clipboard, Location location, Integer rotation) {
+    private record EntityPasteInfo(Clipboard clipboard, Location location) {
     }
 
-    private record ChestPlacement(Location location, Material material, Integer rotation) {
+    private record ChestPlacement(Location location, Material material) {
     }
 
     private record BarrelPlacement(Location location, ModulesConfigFields modulesConfigFields) {

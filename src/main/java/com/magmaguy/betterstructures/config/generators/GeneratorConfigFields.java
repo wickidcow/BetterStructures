@@ -6,11 +6,8 @@ import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.magmacore.config.CustomConfigFields;
 import com.magmaguy.magmacore.thirdparty.CustomBiomeCompatibility;
 import com.magmaguy.magmacore.util.Logger;
-import io.papermc.paper.registry.RegistryAccess;
-import io.papermc.paper.registry.RegistryKey;
 import lombok.Getter;
 import lombok.Setter;
-import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Biome;
 
@@ -91,7 +88,9 @@ public class GeneratorConfigFields extends CustomConfigFields {
         this.treasureFilename = processString("treasureFilename", treasureFilename, null, false);
         TreasureConfigFields treasureConfig = TreasureConfig.getConfigFields(treasureFilename);
         if (treasureConfig != null) {
-            this.chestContents = new ChestContents(treasureConfig);
+            //Reuse the treasure config's own ChestContents (built once at treasure load) like the
+            //schematic config fields do; rolling never mutates the instance
+            this.chestContents = treasureConfig.getChestContents();
         } else {
             Logger.warn("No valid treasure config file found for generator " + filename + " ! This will not spawn loot in chests until fixed.");
         }
@@ -104,7 +103,7 @@ public class GeneratorConfigFields extends CustomConfigFields {
         if (generateLootInBarrels) {
             TreasureConfigFields barrelTreasureConfig = TreasureConfig.getConfigFields(barrelTreasureFilename);
             if (barrelTreasureConfig != null) {
-                this.barrelContents = new ChestContents(barrelTreasureConfig);
+                this.barrelContents = barrelTreasureConfig.getChestContents();
             } else {
                 Logger.warn("No valid barrel treasure config found for generator " + filename + " (looked for: " + barrelTreasureFilename + "). Barrels in this generator will be left empty until fixed.");
             }
@@ -189,28 +188,19 @@ public class GeneratorConfigFields extends CustomConfigFields {
             return null;
         }
 
-        // Custom biome namespaces are intentionally accepted as-is. Their registries
-        // may be supplied by Terra/Iris/Terralith integrations after configuration load.
+        // If already in namespace:key format, return as is (ensuring lowercase)
         if (biomeString.contains(":")) {
             return biomeString.toLowerCase(Locale.ROOT);
         }
 
-        // Paper 26.2 represents vanilla biomes through the dynamic registry rather
-        // than the for-removal Biome enum valueOf path.
-        String normalizedBiome = biomeString.toLowerCase(Locale.ROOT);
-        NamespacedKey biomeKey = NamespacedKey.fromString(normalizedBiome);
-        if (biomeKey == null) {
+        // Handle vanilla biomes (convert from enum name to namespace:key format)
+        try {
+            Biome biome = Biome.valueOf(biomeString.toUpperCase(Locale.ROOT));
+            return "minecraft:" + biome.getKey().getKey();
+        } catch (IllegalArgumentException e) {
             Logger.warn("Invalid biome name: " + biomeString);
             return null;
         }
-
-        Biome biome = RegistryAccess.registryAccess().getRegistry(RegistryKey.BIOME).get(biomeKey);
-        if (biome == null) {
-            Logger.warn("Invalid biome name: " + biomeString);
-            return null;
-        }
-
-        return biomeKey.toString();
     }
 
     public enum StructureType {

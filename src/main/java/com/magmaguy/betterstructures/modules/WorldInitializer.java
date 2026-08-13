@@ -11,14 +11,14 @@ public class WorldInitializer {
     public static World generateWorld(String worldName, Player player) {
         WorldCreator worldCreator = new WorldCreator(worldName);
         worldCreator.environment(World.Environment.NORMAL);
-        // Paper 26.x no longer keeps spawn chunks permanently loaded, so the old
-        // WorldCreator#keepSpawnInMemory(false) option has been removed and is
-        // unnecessary for this temporary void world.
+        worldCreator.keepSpawnInMemory(false);
         worldCreator.generator(new VoidGenerator());
         World world = worldCreator.createWorld();
+        if (world == null) {
+            throw new IllegalStateException("Bukkit failed to create world " + worldName);
+        }
         world.setAutoSave(false);
-//        player.teleport(new Location(world, 8, 16, 8));
-        player.setGameMode(GameMode.SPECTATOR);
+        if (player != null) player.setGameMode(GameMode.SPECTATOR);
         return world;
     }
 

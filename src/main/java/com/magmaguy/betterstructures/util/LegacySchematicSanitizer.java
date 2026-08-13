@@ -18,20 +18,18 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * Removes obsolete bed block-entity records from legacy schematic NBT before
- * WorldEdit/FAWE sends them through Minecraft's DataFixer.
+ * Repairs the legacy bed representation used by older schematic formats before
+ * WorldEdit/FAWE sends the data through Minecraft 26.2's DataFixer.
  *
- * <p>Minecraft 26.2 removed the {@code minecraft:bed} block entity. Older
- * Sponge/MCEdit schematics can still contain those records even though the bed
- * itself is fully represented by its block state. Keeping the stale block
- * entity causes Minecraft's 26.2 data fixer to report
- * {@code Unsupported key: minecraft:bed} once for every old bed record.</p>
+ * <p>Minecraft 26.2 no longer accepts the obsolete {@code minecraft:bed}
+ * block-entity id. Older Sponge/MCEdit schematics may also contain a palette key
+ * named {@code minecraft:bed}. This compatibility pass removes only the stale
+ * bed block-entity records and rewrites only legacy bed palette keys to
+ * {@code minecraft:red_bed}. Existing modern bed colours are never changed.</p>
  *
- * <p>This sanitizer intentionally removes only list entries whose direct
- * {@code Id} or {@code id} string is exactly {@code minecraft:bed}, and only
- * from {@code BlockEntities} or {@code TileEntities} lists. Palette and block
- * state data are copied byte-for-byte, so bed colour, facing and part remain
- * untouched.</p>
+ * <p>When a legacy palette key includes block-state properties, for example
+ * {@code minecraft:bed[facing=north,part=foot,occupied=false]}, the complete
+ * property suffix is preserved when it becomes {@code minecraft:red_bed[...]}.</p>
  */
 public final class LegacySchematicSanitizer {
 
@@ -54,32 +52,35 @@ public final class LegacySchematicSanitizer {
 
     private static final byte[] BLOCK_ENTITIES = ascii("BlockEntities");
     private static final byte[] TILE_ENTITIES = ascii("TileEntities");
+    private static final byte[] PALETTE = ascii("Palette");
     private static final byte[] ID_UPPER = ascii("Id");
     private static final byte[] ID_LOWER = ascii("id");
     private static final byte[] BED_ID = ascii("minecraft:bed");
+    private static final String LEGACY_BED_BLOCK = "minecraft:bed";
+    private static final String RED_BED_BLOCK = "minecraft:red_bed";
 
     private LegacySchematicSanitizer() {
     }
 
     /**
-     * Opens a schematic for WorldEdit, sanitizing obsolete bed block entities
-     * in memory when present. The source file is never modified.
+     * Opens a schematic for WorldEdit, repairing legacy bed data in memory when
+     * present. The source schematic file is never modified.
      *
-     * <p>If the file is not a gzip-compressed NBT schematic, or if its NBT
-     * cannot be parsed by this compatibility pass, the original file stream is
-     * returned unchanged so WorldEdit remains the authority for format/error
-     * handling.</p>
+     * <p>If the file is not a gzip-compressed NBT schematic, or if this small
+     * compatibility parser cannot read it, the original file stream is returned
+     * unchanged so WorldEdit remains the authority for normal format handling.</p>
      */
     public static SanitizedInput open(File schematicFile) throws IOException {
         try {
-            Counter removed = new Counter();
+            Counter removedBlockEntities = new Counter();
+            Counter replacedPaletteEntries = new Counter();
             NamedTag root;
             try (DataInputStream input = new DataInputStream(new BufferedInputStream(
                     new GZIPInputStream(new FileInputStream(schematicFile))))) {
-                root = readNamedTag(input, 0, removed);
+                root = readNamedTag(input, 0, removedBlockEntities, replacedPaletteEntries);
             }
 
-            if (removed.value == 0) {
+            if (removedBlockEntities.value == 0 && replacedPaletteEntries.value == 0) {
                 return originalInput(schematicFile);
             }
 
@@ -89,27 +90,33 @@ public final class LegacySchematicSanitizer {
                 writeNamedTag(output, root);
             }
 
-            return new SanitizedInput(new ByteArrayInputStream(bytes.toByteArray()), removed.value);
+            return new SanitizedInput(
+                    new ByteArrayInputStream(bytes.toByteArray()),
+                    removedBlockEntities.value,
+                    replacedPaletteEntries.value);
         } catch (IOException | RuntimeException ignored) {
             // Do not replace WorldEdit's own format/error handling with ours.
-            // This pass is deliberately best-effort and only exists for the
-            // removed 26.2 bed block-entity compatibility case.
             return originalInput(schematicFile);
         }
     }
 
     private static SanitizedInput originalInput(File schematicFile) throws IOException {
-        return new SanitizedInput(new BufferedInputStream(new FileInputStream(schematicFile)), 0);
+        return new SanitizedInput(new BufferedInputStream(new FileInputStream(schematicFile)), 0, 0);
     }
 
-    private static NamedTag readNamedTag(DataInputStream input, int depth, Counter removed) throws IOException {
+    private static NamedTag readNamedTag(
+            DataInputStream input,
+            int depth,
+            Counter removedBlockEntities,
+            Counter replacedPaletteEntries) throws IOException {
         checkDepth(depth);
         byte type = input.readByte();
         if (type == TAG_END) {
             throw new IOException("NBT root tag cannot be TAG_End");
         }
         RawString name = readRawString(input);
-        return new NamedTag(name, readPayload(input, type, name, depth + 1, removed));
+        return new NamedTag(name, readPayload(
+                input, type, name, depth + 1, removedBlockEntities, replacedPaletteEntries));
     }
 
     private static NbtTag readPayload(
@@ -117,7 +124,8 @@ public final class LegacySchematicSanitizer {
             byte type,
             RawString name,
             int depth,
-            Counter removed) throws IOException {
+            Counter removedBlockEntities,
+            Counter replacedPaletteEntries) throws IOException {
         checkDepth(depth);
         return switch (type) {
             case TAG_BYTE -> new NbtTag(type, input.readByte());
@@ -133,29 +141,32 @@ public final class LegacySchematicSanitizer {
                 yield new NbtTag(type, value);
             }
             case TAG_STRING -> new NbtTag(type, readRawString(input));
-            case TAG_LIST -> readList(input, name, depth + 1, removed);
-            case TAG_COMPOUND -> readCompound(input, depth + 1, removed);
+            case TAG_LIST -> readList(
+                    input, name, depth + 1, removedBlockEntities, replacedPaletteEntries);
+            case TAG_COMPOUND -> readCompound(
+                    input, name, depth + 1, removedBlockEntities, replacedPaletteEntries);
             case TAG_INT_ARRAY -> {
                 int length = checkedLength(input.readInt(), "int array");
                 int[] value = new int[length];
-                for (int i = 0; i < length; i++) {
-                    value[i] = input.readInt();
-                }
+                for (int i = 0; i < length; i++) value[i] = input.readInt();
                 yield new NbtTag(type, value);
             }
             case TAG_LONG_ARRAY -> {
                 int length = checkedLength(input.readInt(), "long array");
                 long[] value = new long[length];
-                for (int i = 0; i < length; i++) {
-                    value[i] = input.readLong();
-                }
+                for (int i = 0; i < length; i++) value[i] = input.readLong();
                 yield new NbtTag(type, value);
             }
             default -> throw new IOException("Unsupported NBT tag type " + type);
         };
     }
 
-    private static NbtTag readList(DataInputStream input, RawString name, int depth, Counter removed) throws IOException {
+    private static NbtTag readList(
+            DataInputStream input,
+            RawString name,
+            int depth,
+            Counter removedBlockEntities,
+            Counter replacedPaletteEntries) throws IOException {
         checkDepth(depth);
         byte elementType = input.readByte();
         int length = checkedLength(input.readInt(), "list");
@@ -169,9 +180,10 @@ public final class LegacySchematicSanitizer {
 
         List<NbtTag> elements = new ArrayList<>(Math.min(length, 4096));
         for (int i = 0; i < length; i++) {
-            NbtTag element = readPayload(input, elementType, null, depth + 1, removed);
+            NbtTag element = readPayload(
+                    input, elementType, null, depth + 1, removedBlockEntities, replacedPaletteEntries);
             if (bedEntityList && isRemovedBedBlockEntity(element)) {
-                removed.value++;
+                removedBlockEntities.value++;
             } else {
                 elements.add(element);
             }
@@ -180,38 +192,57 @@ public final class LegacySchematicSanitizer {
         return new NbtTag(TAG_LIST, new ListPayload(elementType, elements));
     }
 
-    private static NbtTag readCompound(DataInputStream input, int depth, Counter removed) throws IOException {
+    private static NbtTag readCompound(
+            DataInputStream input,
+            RawString compoundName,
+            int depth,
+            Counter removedBlockEntities,
+            Counter replacedPaletteEntries) throws IOException {
         checkDepth(depth);
         List<NamedTag> entries = new ArrayList<>();
+        boolean paletteCompound = compoundName != null && compoundName.equalsBytes(PALETTE);
+
         while (true) {
             byte type = input.readByte();
-            if (type == TAG_END) {
-                break;
+            if (type == TAG_END) break;
+
+            RawString entryName = readRawString(input);
+            if (paletteCompound) {
+                RawString normalizedName = normalizeLegacyBedPaletteName(entryName);
+                if (normalizedName != entryName) {
+                    entryName = normalizedName;
+                    replacedPaletteEntries.value++;
+                }
             }
-            RawString name = readRawString(input);
-            entries.add(new NamedTag(name, readPayload(input, type, name, depth + 1, removed)));
+
+            entries.add(new NamedTag(entryName, readPayload(
+                    input, type, entryName, depth + 1, removedBlockEntities, replacedPaletteEntries)));
         }
         return new NbtTag(TAG_COMPOUND, entries);
     }
 
-    private static boolean isRemovedBedBlockEntity(NbtTag tag) {
-        if (tag.type != TAG_COMPOUND) {
-            return false;
+    private static RawString normalizeLegacyBedPaletteName(RawString name) {
+        String value = name.asUtf8();
+        if (value.equals(LEGACY_BED_BLOCK)) {
+            return RawString.utf8(RED_BED_BLOCK);
         }
+        String statePrefix = LEGACY_BED_BLOCK + "[";
+        if (value.startsWith(statePrefix)) {
+            return RawString.utf8(RED_BED_BLOCK + value.substring(LEGACY_BED_BLOCK.length()));
+        }
+        return name;
+    }
+
+    private static boolean isRemovedBedBlockEntity(NbtTag tag) {
+        if (tag.type != TAG_COMPOUND) return false;
 
         @SuppressWarnings("unchecked")
         List<NamedTag> entries = (List<NamedTag>) tag.value;
         for (NamedTag entry : entries) {
-            if (entry.tag.type != TAG_STRING) {
-                continue;
-            }
-            if (!entry.name.equalsBytes(ID_UPPER) && !entry.name.equalsBytes(ID_LOWER)) {
-                continue;
-            }
+            if (entry.tag.type != TAG_STRING) continue;
+            if (!entry.name.equalsBytes(ID_UPPER) && !entry.name.equalsBytes(ID_LOWER)) continue;
             RawString id = (RawString) entry.tag.value;
-            if (id.equalsBytes(BED_ID)) {
-                return true;
-            }
+            if (id.equalsBytes(BED_ID)) return true;
         }
         return false;
     }
@@ -240,31 +271,23 @@ public final class LegacySchematicSanitizer {
                 ListPayload list = (ListPayload) tag.value;
                 output.writeByte(list.elementType);
                 output.writeInt(list.elements.size());
-                for (NbtTag element : list.elements) {
-                    writePayload(output, element);
-                }
+                for (NbtTag element : list.elements) writePayload(output, element);
             }
             case TAG_COMPOUND -> {
                 @SuppressWarnings("unchecked")
                 List<NamedTag> entries = (List<NamedTag>) tag.value;
-                for (NamedTag entry : entries) {
-                    writeNamedTag(output, entry);
-                }
+                for (NamedTag entry : entries) writeNamedTag(output, entry);
                 output.writeByte(TAG_END);
             }
             case TAG_INT_ARRAY -> {
                 int[] value = (int[]) tag.value;
                 output.writeInt(value.length);
-                for (int entry : value) {
-                    output.writeInt(entry);
-                }
+                for (int entry : value) output.writeInt(entry);
             }
             case TAG_LONG_ARRAY -> {
                 long[] value = (long[]) tag.value;
                 output.writeInt(value.length);
-                for (long entry : value) {
-                    output.writeLong(entry);
-                }
+                for (long entry : value) output.writeLong(entry);
             }
             default -> throw new IOException("Unsupported NBT tag type " + tag.type);
         }
@@ -293,9 +316,7 @@ public final class LegacySchematicSanitizer {
     }
 
     private static void checkDepth(int depth) throws IOException {
-        if (depth > MAX_DEPTH) {
-            throw new IOException("NBT nesting exceeds " + MAX_DEPTH + " levels");
-        }
+        if (depth > MAX_DEPTH) throw new IOException("NBT nesting exceeds " + MAX_DEPTH + " levels");
     }
 
     private static byte[] ascii(String value) {
@@ -313,8 +334,16 @@ public final class LegacySchematicSanitizer {
             this.bytes = bytes;
         }
 
+        private static RawString utf8(String value) {
+            return new RawString(value.getBytes(StandardCharsets.UTF_8));
+        }
+
         private boolean equalsBytes(byte[] expected) {
             return Arrays.equals(bytes, expected);
+        }
+
+        private String asUtf8() {
+            return new String(bytes, StandardCharsets.UTF_8);
         }
     }
 
@@ -348,7 +377,10 @@ public final class LegacySchematicSanitizer {
         }
     }
 
-    public record SanitizedInput(InputStream inputStream, int removedBedBlockEntities) implements AutoCloseable {
+    public record SanitizedInput(
+            InputStream inputStream,
+            int removedBedBlockEntities,
+            int replacedBedPaletteEntries) implements AutoCloseable {
         @Override
         public void close() throws IOException {
             inputStream.close();

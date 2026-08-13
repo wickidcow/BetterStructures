@@ -5,16 +5,12 @@ import com.magmaguy.betterstructures.config.treasures.TreasureConfig;
 import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.magmacore.config.CustomConfigFields;
 import com.magmaguy.magmacore.util.Logger;
-import io.papermc.paper.registry.RegistryAccess;
-import io.papermc.paper.registry.RegistryKey;
 import lombok.Getter;
 import lombok.Setter;
-import org.bukkit.NamespacedKey;
 import org.bukkit.block.Biome;
 
 import java.io.IOException;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -41,7 +37,6 @@ public class ModulesConfigFields extends CustomConfigFields {
     private String minecraftBiomeString = "null";
     @Getter
     private Biome minecraftBiome = null;
-    @Getter
     private String cloneConfig = "";
     private ModulesConfigFields clonedConfig = null;
     private boolean northIsPassable = true;
@@ -157,9 +152,9 @@ public class ModulesConfigFields extends CustomConfigFields {
             TreasureConfigFields treasureConfigFields = TreasureConfig.getConfigFields(treasureFile);
             if (treasureConfigFields == null) {
                 Logger.warn("Failed to get treasure config file " + treasureFile + " for schematic configuration " + filename + " ! Defaulting to the generator treasure.");
-                return;
+            } else {
+                this.chestContents = treasureConfigFields.getChestContents();
             }
-            this.chestContents = treasureConfigFields.getChestContents();
         }
         this.generateLootInBarrels = processBoolean("generateLootInBarrels", generateLootInBarrels, true, true);
         this.barrelTreasureFilename = processString("barrelTreasureFilename", barrelTreasureFilename, "treasure_barrel_food.yml", true);
@@ -171,33 +166,32 @@ public class ModulesConfigFields extends CustomConfigFields {
         this.weight = processDouble("weight", weight, weight, true);
         this.repetitionPenalty = processDouble("repetitionPenalty", repetitionPenalty, repetitionPenalty, true);
         this.enforceHorizontalRotation = processBoolean("enforceHorizontalRotation", enforceHorizontalRotation, enforceHorizontalRotation, true);
+        this.northIsPassable = processBoolean("northIsPassable", northIsPassable, northIsPassable, true);
+        this.southIsPassable = processBoolean("southIsPassable", southIsPassable, southIsPassable, true);
+        this.eastIsPassable = processBoolean("eastIsPassable", eastIsPassable, eastIsPassable, true);
+        this.westIsPassable = processBoolean("westIsPassable", westIsPassable, westIsPassable, true);
+        this.upIsPassable = processBoolean("upIsPassable", upIsPassable, upIsPassable, true);
+        this.downIsPassable = processBoolean("downIsPassable", downIsPassable, downIsPassable, true);
         this.moduleBiome = processString("biome", moduleBiome, moduleBiome, true);
         this.minecraftBiomeString = processString("minecraftBiome", minecraftBiomeString, minecraftBiomeString, true);
-        if (!minecraftBiomeString.equalsIgnoreCase("null")) {
-            this.minecraftBiome = resolveMinecraftBiome(minecraftBiomeString);
-            if (this.minecraftBiome == null) {
+        if (!minecraftBiomeString.equalsIgnoreCase("null"))
+            try {
+                this.minecraftBiome = Biome.valueOf(minecraftBiomeString.toUpperCase());
+            } catch (Exception e) {
                 Logger.warn("Biome " + minecraftBiomeString + " is not a valid biome! Fix it in " + filename);
             }
-        }
         this.cloneConfig = processString("cloneConfig", cloneConfig, cloneConfig, true);
         this.compoundModule = processString("compoundModule", compoundModule, compoundModule, true);
         this.isAutomaticallyPlaced = processBoolean("isAutomaticallyPlaced", isAutomaticallyPlaced, isAutomaticallyPlaced, true);
-    }
-
-    private Biome resolveMinecraftBiome(String biomeName) {
-        NamespacedKey biomeKey = NamespacedKey.fromString(biomeName.toLowerCase(Locale.ROOT));
-        if (biomeKey == null) return null;
-        return RegistryAccess.registryAccess().getRegistry(RegistryKey.BIOME).get(biomeKey);
     }
 
     public void validateClones() {
         if (cloneConfig.isEmpty()) return;
         clonedConfig = ModulesConfig.getModuleConfiguration(cloneConfig);
         if (clonedConfig == null) {
-            Logger.warn("Configuration " + filename + " is supposed to clone " + clonedConfig + " but that is not a valid configuration file! The cloning setting will be ignored.");
+            Logger.warn("Configuration " + filename + " is supposed to clone " + cloneConfig + " but that is not a valid configuration file! The cloning setting will be ignored.");
             return;
         }
-//        else            Logger.info("Cloned " + filename + " into " + clonedConfig.getFilename());
         fileConfiguration.set("treasureFile", null);
         fileConfiguration.set("barrelTreasureFilename", null);
         fileConfiguration.set("borders", null);
@@ -215,6 +209,7 @@ public class ModulesConfigFields extends CustomConfigFields {
         fileConfiguration.set("westIsPassable", null);
         fileConfiguration.set("upIsPassable", null);
         fileConfiguration.set("downIsPassable", null);
+        fileConfiguration.set("isAutomaticallyPlaced", null);
         try {
             fileConfiguration.save(file);
         } catch (IOException e) {

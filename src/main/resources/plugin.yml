@@ -1,10 +1,11 @@
 name: BetterStructures
-version: '2.6.3'
+version: '2.7.0'
 main: com.magmaguy.betterstructures.BetterStructures
 api-version: '26.2'
 depend: [ FastAsyncWorldEdit ]
 softdepend:
   - EliteMobs
+  - MythicMobs
   - WorldGuard
   - Terralith
   - Iris

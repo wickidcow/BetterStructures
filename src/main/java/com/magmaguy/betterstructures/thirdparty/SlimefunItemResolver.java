@@ -63,7 +63,6 @@ public final class SlimefunItemResolver {
                 return null;
             }
 
-            // Slimefun documents its item template as immutable and requires callers to clone it.
             return itemStack.clone();
         } catch (InvocationTargetException exception) {
             Throwable cause = exception.getCause() == null ? exception : exception.getCause();

@@ -57,29 +57,23 @@ Depending on the installed structure packs and configuration, it can add things 
 
 BetterStructures analyzes terrain and chooses appropriate placement locations, allowing structures to blend into many different world-generation environments instead of requiring a specific terrain generator.
 
-The result is a world that feels more alive and gives players more reasons to explore.
-
 ---
 
 ## 📄 About this fork
 
-This repository is a **downstream, unofficial maintenance fork** of **MagmaGuy/BetterStructures**.
+This repository is a **downstream, unofficial maintenance fork** of **MagmaGuy/BetterStructures**. The current branch incorporates the upstream **BetterStructures 2.7.0** codebase and then layers focused Paper 26.2 compatibility, build, stability, and optional integration work on top.
 
-Its purpose is deliberately narrow: provide a BetterStructures build maintained around a **modern Paper-focused server environment**, with compatibility, build, stability, and performance work appropriate for that environment.
-
-This fork is maintained specifically for **AlbionMC.com** and targets the server stack used there. Fork-specific work should remain focused on compatibility, performance, and integrations useful to that environment rather than changing BetterStructures into a different project.
+This fork is maintained specifically for **AlbionMC.com**. Fork-specific changes should remain focused on compatibility, performance, and integrations useful to that environment rather than changing BetterStructures into a different project.
 
 ### Fork goals
 
 - Keep the original BetterStructures gameplay and identity intact.
 - Preserve compatibility with existing BetterStructures configurations and structure packs wherever practical.
+- Incorporate useful upstream BetterStructures updates rather than freezing an old codebase.
 - Maintain support for current Paper server versions used by this branch.
 - Focus testing on Paper rather than attempting to support every Bukkit-derived server implementation.
 - Apply targeted performance and compatibility improvements without unnecessarily redesigning MagmaGuy's plugin.
 - Keep upstream attribution and project history clearly visible.
-- Make it easy to identify which changes belong to this fork versus the original project.
-
-This fork is **not intended to become a competing general-purpose BetterStructures distribution**. If the official BetterStructures release already works perfectly for your server, you should use and support the official project.
 
 ---
 
@@ -87,14 +81,23 @@ This fork is **not intended to become a competing general-purpose BetterStructur
 
 The current Albion fork is built around:
 
+- **BetterStructures 2.7.0** upstream foundation
 - **Paper 26.2** as the primary compile/test baseline
 - **Java 25**
-- **FastAsyncWorldEdit (FAWE)** as the required structure-placement backend
+- **FastAsyncWorldEdit (FAWE)** as the required WorldEdit implementation and structure-placement backend
 - **Purpur** and conventional Paper-compatible forks through Paper API compatibility
-- reduced version-specific/NMS coupling where supported APIs are available
 - optional integrations remaining optional rather than becoming hard dependencies
+- compatibility repair for obsolete pre-26.2 schematic data
 
-FAWE supplies the WorldEdit API used for structure placement, replacing the old BetterStructures-specific native palette/NMS fast path in this fork.
+### Legacy bed repair
+
+Minecraft 26.2 no longer accepts the old `minecraft:bed` block-entity representation. When an old schematic is loaded, this fork repairs that legacy data in memory before WorldEdit/FAWE parses it:
+
+- obsolete `minecraft:bed` block-entity records are removed;
+- obsolete `minecraft:bed` palette entries become `minecraft:red_bed`;
+- facing, head/foot, occupied, and other block-state properties are preserved;
+- already-valid modern beds such as blue, white, black, or existing red beds are not recolored;
+- the original schematic file on disk is not modified.
 
 ### Optional Slimefun loot
 
@@ -119,7 +122,7 @@ An opt-in `treasure_slimefun.yml` table is included. It is not forced into exist
 
 Validated builds produce a directly usable raw JAR named:
 
-`BetterStructures-2.6.3-Albion.jar`
+`BetterStructures-2.7.0-Albion.jar`
 
 The release asset is a normal `.jar` and does not need to be extracted from a `.jar.zip` archive.
 
@@ -127,15 +130,7 @@ The release asset is a normal `.jar` and does not need to be extracted from a `.
 
 ## 🧪 Platform focus
 
-This branch is maintained primarily around:
-
-- **Paper**
-- modern Minecraft server versions
-- modern Java runtimes supported by the target Paper release
-- production-server stability
-- structure-generation performance and compatibility
-
-Other Paper-compatible forks may work, but they are not necessarily the primary development or testing target of this repository.
+This branch is maintained primarily around Paper 26.2, modern Java runtimes supported by that Paper release, production-server stability, and structure-generation performance/compatibility. Other Paper-compatible forks may work, but they are not necessarily the primary development or testing target.
 
 For broad support, official releases, documentation, structure packs, and the original development direction, use MagmaGuy's BetterStructures project.
 
@@ -143,20 +138,13 @@ For broad support, official releases, documentation, structure packs, and the or
 
 ## 🔀 Upstream relationship
 
-**Original project:**
-https://github.com/MagmaGuy/BetterStructures
+**Original project:** https://github.com/MagmaGuy/BetterStructures
 
-This repository should be considered a modified downstream build.
-
-When possible, useful upstream BetterStructures fixes should continue to be respected and incorporated. Fork-specific changes should remain clearly identifiable so that the original project's work is never obscured.
+This repository should be considered a modified downstream build. Useful upstream BetterStructures fixes should continue to be incorporated, while fork-specific changes should remain clearly identifiable so the original project's work is never obscured.
 
 ### Reporting problems
 
-If a problem occurs only while using this fork, report it to **this repository** rather than asking MagmaGuy to support modifications he did not make.
-
-If the same problem can be reproduced using the current **official BetterStructures** release, then the original BetterStructures project is the appropriate place to investigate it.
-
-Please do not present fork-specific bugs as problems caused by MagmaGuy or the official BetterStructures project.
+If a problem occurs only while using this fork, report it to **this repository** rather than asking MagmaGuy to support modifications he did not make. If the same problem can be reproduced using the current official BetterStructures release, then the original BetterStructures project is the appropriate place to investigate it.
 
 ---
 
@@ -178,15 +166,9 @@ Maintenance changes in this repository are downstream compatibility and server-e
 
 ## 📜 License
 
-BetterStructures is distributed under the **GNU General Public License v3.0 (GPLv3)**, and this fork remains under that same license.
+BetterStructures is distributed under the **GNU General Public License v3.0 (GPLv3)**, and this fork remains under that same license. See the included [`LICENSE`](LICENSE) file for the complete license terms.
 
-See the included [`LICENSE`](LICENSE) file for the complete license terms.
-
-In general, when distributing a modified GPL-covered build, the GPL requires that the corresponding source remain available under the GPL and that notices identifying modifications and the applicable license are preserved as required by the license.
-
-This software is provided **without warranty**, as described by the GNU GPLv3.
-
-Nothing in this README removes, replaces, or limits the rights granted by the project's GPLv3 license.
+This software is provided **without warranty**, as described by the GNU GPLv3. Nothing in this README removes, replaces, or limits the rights granted by the project's GPLv3 license.
 
 ---
 

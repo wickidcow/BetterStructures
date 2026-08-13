@@ -33,6 +33,14 @@ public class ChestEntry {
                       TreasureConfigFields treasureConfigFields) {
         this.material = material;
         this.weight = chance;
+        if (minAmount < 1 || maxAmount < minAmount) {
+            Logger.warn("Missing or invalid amount for loot entry"
+                    + (material != null ? " " + material : "")
+                    + " in treasure file " + (treasureConfigFields != null ? treasureConfigFields.getFilename() : "unknown")
+                    + " ! Defaulting the amount to 1.");
+            minAmount = Math.max(minAmount, 1);
+            maxAmount = Math.max(maxAmount, minAmount);
+        }
         this.minAmount = minAmount;
         this.maxAmount = maxAmount;
         this.itemStack = itemStack;
@@ -78,8 +86,8 @@ public class ChestEntry {
             resolvedItemStack.setAmount(amount);
             return resolvedItemStack;
         } catch (Exception exception) {
-            Logger.warn("Failed to roll BetterStructures loot entry in " + getSourceFilename() + ": " +
-                    exception.getClass().getSimpleName() + ": " + String.valueOf(exception.getMessage()));
+            Logger.warn("Failed to roll BetterStructures loot entry in " + getSourceFilename() + ": "
+                    + exception.getClass().getSimpleName() + ": " + String.valueOf(exception.getMessage()));
             return null;
         }
     }
