@@ -23,7 +23,6 @@ import com.magmaguy.betterstructures.thirdparty.WorldGuard;
 import com.magmaguy.betterstructures.util.ChunkPregenerator;
 import com.magmaguy.betterstructures.worldedit.Schematic;
 import com.magmaguy.betterstructures.worldedit.SchematicClipboardCache;
-import com.magmaguy.easyminecraftgoals.NMSManager;
 import com.magmaguy.magmacore.MagmaCore;
 import com.magmaguy.magmacore.command.CommandManager;
 import com.magmaguy.magmacore.dlc.ConfigurationImporter;
@@ -72,7 +71,6 @@ public final class BetterStructures extends JavaPlugin {
         Bukkit.getLogger().info("  / __  / _ \\/ __/ __/ _ \\/ ___/\\__ \\/ __/ ___/ / / / ___/ __/ / / / ___/ _ \\/ ___/");
         Bukkit.getLogger().info(" / /_/ /  __/ /_/ /_/  __/ /   ___/ / /_/ /  / /_/ / /__/ /_/ /_/ / /  /  __(__  ) ");
         Bukkit.getLogger().info("/_____/\\___/\\__/\\__/\\___/_/   /____/\\__/_/   \\__,_/\\___/\\__/\\__,_/_/   \\___/____/");
-        // Plugin startup logic
         Bukkit.getLogger().info("[BetterStructures] Initialized version " + this.getDescription().getVersion() + "!");
         MagmaCore.onEnable(this);
         MagmaCore.exportSharedAssets(this);
@@ -148,22 +146,6 @@ public final class BetterStructures extends JavaPlugin {
         Bukkit.getLogger().info("[BetterStructures] Shutdown!");
     }
 
-    /**
-     * Decides whether initialization has to queue behind the plugins listed in plugin.yml softdepend.
-     * <p>
-     * By default MagmaCore holds a plugin's whole async phase until every present softdepend has
-     * finished initializing. For BetterStructures that meant its schematic loading ran strictly
-     * after EliteMobs finished, serialising two long, unrelated workloads back to back.
-     * <p>
-     * Nothing in the async phase actually needs EliteMobs to be *initialized* — schematic parsing
-     * only needs to know whether EliteMobs is *installed*, which is already resolved in onEnable
-     * via SchematicContainer.updateOptionalPluginAvailability. The one exception is the content
-     * importer: when it deposits files into another plugin's data folder, that plugin has to be
-     * told to reload, and reloading a plugin mid-initialization is not safe. So the wait is kept
-     * only when there is actually something to import, which is rare (a fresh DLC zip in imports).
-     *
-     * @return null to use the plugin.yml softdepend list, or an empty list to wait for nobody
-     */
     private List<String> resolveInitializationDependencies() {
         File importsFolder = new File(getDataFolder(), "imports");
         String[] pendingImports = importsFolder.list();
@@ -203,9 +185,6 @@ public final class BetterStructures extends JavaPlugin {
     private void syncInitialization(PluginInitializationContext initializationContext) {
         initializationContext.step("Valid Worlds Config");
         new ValidWorldsConfig();
-
-        initializationContext.step("NMS Adapter");
-        NMSManager.initializeAdapter(this);
 
         initializationContext.step("Components Folder");
         ComponentsConfigFolder.initialize();
@@ -284,11 +263,6 @@ public final class BetterStructures extends JavaPlugin {
     private void startImportedContentReload() {
         contentReloadInProgress = true;
 
-        // `/betterstructures reload` is presented as the plugin reload command,
-        // so runtime settings must not remain pinned to their startup values.
-        // Reload these synchronously on the server thread before asynchronous
-        // content parsing starts; ValidWorldsConfig also reads the live Bukkit
-        // world list and therefore must not be constructed by the worker.
         new DefaultConfig();
         new ValidWorldsConfig();
         SchematicContainer.updateOptionalPluginAvailability(
@@ -340,10 +314,6 @@ public final class BetterStructures extends JavaPlugin {
         if (!successful) {
             queuedReloadSenders.clear();
             NewChunkLoadEvent.discardDeferredNewChunks();
-            // Every content registry is intentionally cleared before the
-            // worker rebuilds it. Continuing to run after a failed rebuild
-            // would leave a deceptively enabled plugin with partial or empty
-            // content, so fail closed and make the defect visible.
             Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
@@ -353,11 +323,6 @@ public final class BetterStructures extends JavaPlugin {
             return;
         }
 
-        // A command arriving during a reload can accompany a file change made
-        // after the first worker started. Run one more complete reload instead
-        // of merely attaching its sender to the first result. All overlapping
-        // requests are coalesced into that one follow-up, keeping the static
-        // registries single-writer while still observing the newest files.
         activeReloadSenders.addAll(queuedReloadSenders);
         queuedReloadSenders.clear();
         startImportedContentReload();
@@ -372,12 +337,7 @@ public final class BetterStructures extends JavaPlugin {
         return new ArrayList<>(BSPackage.getBsPackages().values());
     }
 
-    /**
-     * Rejects commands that read or mutate content registries while the
-     * asynchronous reload worker owns those registries.
-     */
-    public static boolean rejectContentCommandDuringReload(
-            CommandSender sender) {
+    public static boolean rejectContentCommandDuringReload(CommandSender sender) {
         if (!isReloading()) return false;
         if (sender != null) {
             Logger.sendMessage(
