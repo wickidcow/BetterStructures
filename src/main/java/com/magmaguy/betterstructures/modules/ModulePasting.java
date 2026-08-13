@@ -2,14 +2,13 @@ package com.magmaguy.betterstructures.modules;
 
 import com.magmaguy.betterstructures.MetadataHandler;
 import com.magmaguy.betterstructures.api.ChestFillEvent;
-import com.magmaguy.betterstructures.config.DefaultConfig;
 import com.magmaguy.betterstructures.chests.ChestContents;
+import com.magmaguy.betterstructures.config.DefaultConfig;
 import com.magmaguy.betterstructures.config.modulegenerators.ModuleGeneratorsConfigFields;
 import com.magmaguy.betterstructures.config.modules.ModulesConfigFields;
 import com.magmaguy.betterstructures.config.treasures.TreasureConfig;
 import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
 import com.magmaguy.betterstructures.util.WorldEditUtils;
-import com.magmaguy.easyminecraftgoals.NMSManager;
 import com.magmaguy.magmacore.util.Logger;
 import com.magmaguy.magmacore.util.SpigotMessage;
 import com.magmaguy.magmacore.util.WorkloadRunnable;
@@ -30,10 +29,7 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Container;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.Directional;
-import org.bukkit.block.data.Rail;
 import org.bukkit.block.data.type.Chest;
-import org.bukkit.block.data.type.Sign;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -53,7 +49,6 @@ public final class ModulePasting {
     private static final EnumSet<Material> SIGN_MATERIALS = EnumSet.noneOf(Material.class);
 
     static {
-        //Locale.ROOT: the default-locale lowercase turns "SIGN" into "sıgn" on Turkish locales
         for (Material m : Material.values())
             if (m.toString().toUpperCase(Locale.ROOT).contains("SIGN")) SIGN_MATERIALS.add(m);
     }
@@ -78,14 +73,12 @@ public final class ModulePasting {
         this.worldFolder = worldFolder;
         this.moduleGeneratorsConfigFields = moduleGeneratorsConfigFields;
 
-        // Check debug mode and modular world creation settings from first node
         WFCNode firstNode = WFCNodeDeque.peek();
         this.createModularWorld = firstNode != null && firstNode.getWfcGenerator() != null &&
                 firstNode.getWfcGenerator().getModuleGeneratorsConfigFields().isWorldGeneration();
 
         batchPaste(WFCNodeDeque, interpretedSigns);
 
-        // Send notification to players
         if (DefaultConfig.isNewBuildingWarn()) {
             for (Player player : Bukkit.getOnlinePlayers()) {
                 if (player.hasPermission("betterstructures.warn")) {
@@ -119,11 +112,8 @@ public final class ModulePasting {
     }
 
     public static void paste(Clipboard clipboard, Location location, Integer rotation) {
-        if (rotation == null) {
-            return;
-        }
+        if (rotation == null) return;
 
-        // Transform the clipboard using the same approach as batch paste
         AffineTransform transform = new AffineTransform().rotateY(normalizeRotation(rotation));
         Clipboard transformedClipboard;
         try {
@@ -133,46 +123,32 @@ public final class ModulePasting {
             throw new RuntimeException(e);
         }
 
-        // Get dimensions and calculate proper center
         BlockVector3 minPoint = transformedClipboard.getMinimumPoint();
-
         World world = location.getWorld();
         int baseX = location.getBlockX();
         int baseY = location.getBlockY();
         int baseZ = location.getBlockZ();
-
-        // Create edit session for actual placement
         com.sk89q.worldedit.world.World adaptedWorld = BukkitAdapter.adapt(world);
 
         try (EditSession editSession = WorldEdit.getInstance().newEditSession(adaptedWorld)) {
             editSession.setTrackingHistory(false);
             editSession.setSideEffectApplier(SideEffectSet.none());
 
-            // Process each block using calculated center point as reference
             transformedClipboard.getRegion().forEach(blockPos -> {
                 try {
                     BaseBlock baseBlock = transformedClipboard.getFullBlock(blockPos);
-
-                    // Skip air blocks
                     if (baseBlock.getBlockType().getMaterial().isAir()) return;
 
-                    // Calculate world coordinates relative to center point
                     int worldX = baseX + (blockPos.x() - minPoint.x());
                     int worldY = baseY + (blockPos.y() - minPoint.y());
                     int worldZ = baseZ + (blockPos.z() - minPoint.z());
-
-                    // Place the block
-                    BlockVector3 worldPos = BlockVector3.at(worldX, worldY, worldZ);
-                    editSession.setBlock(worldPos, baseBlock);
-
+                    editSession.setBlock(BlockVector3.at(worldX, worldY, worldZ), baseBlock);
                 } catch (WorldEditException e) {
                     Logger.warn("Failed to place block at " + blockPos + ": " + e.getMessage());
                 }
             });
 
-            //The clipboard is already rotated; going through pasteArmorStands() would rotate it twice
             WorldEditUtils.pasteArmorStandsOnlyFromTransformed(transformedClipboard, location);
-
         } catch (Exception e) {
             Logger.warn("Failed to paste structure: " + e.getMessage());
             throw new RuntimeException(e);
@@ -199,12 +175,10 @@ public final class ModulePasting {
     }
 
     private List<Pasteable> generatePasteMeList(Clipboard transformedClipboard,
-                                                Location worldPasteOriginLocation,
-                                                List<InterpretedSign> interpretedSigns,
-                                                ModulesConfigFields modulesConfigFields) {
+                                                 Location worldPasteOriginLocation,
+                                                 List<InterpretedSign> interpretedSigns,
+                                                 ModulesConfigFields modulesConfigFields) {
         List<Pasteable> pasteableList = new ArrayList<>();
-
-        // Get the minimum point of the transformed clipboard to use as reference
         BlockVector3 minPoint = transformedClipboard.getMinimumPoint();
 
         World world = worldPasteOriginLocation.getWorld();
@@ -212,23 +186,17 @@ public final class ModulePasting {
         int baseY = worldPasteOriginLocation.getBlockY();
         int baseZ = worldPasteOriginLocation.getBlockZ();
 
-        // Process each block in the transformed clipboard
         transformedClipboard.getRegion().forEach(blockPos -> {
             BaseBlock baseBlock = transformedClipboard.getFullBlock(blockPos);
             BlockState blockState = baseBlock.toImmutableState();
-            // Air must still be pasted when generating into an existing world, as it is what
-            // carves the walkable interiors out of the terrain. Only void worlds can skip it.
             if (createModularWorld && WorldEditUtils.isAir(blockState)) return;
 
-            // Calculate world coordinates relative to the minimum point
             int worldX = baseX + (blockPos.x() - minPoint.x());
             int worldY = baseY + (blockPos.y() - minPoint.y());
             int worldZ = baseZ + (blockPos.z() - minPoint.z());
 
             Location pasteLocation = new Location(world, worldX, worldY, worldZ);
             Material material = WorldEditUtils.adaptMaterial(blockState);
-
-            // Skip barriers
             if (material == Material.BARRIER) return;
 
             BlockData blockData = material == null ? null : WorldEditUtils.createBlockDataOrNull(baseBlock);
@@ -237,12 +205,10 @@ public final class ModulePasting {
                 return;
             }
 
-            // Handle signs - collect instructions then turn into AIR
             if (SIGN_MATERIALS.contains(blockData.getMaterial())) {
                 List<String> lines = getLines(baseBlock);
                 interpretedSigns.add(new InterpretedSign(pasteLocation, lines));
 
-                // Parse sign content for special markers
                 for (String line : lines) {
                     if (line.contains("[spawn]") && lines.size() > 1) {
                         try {
@@ -258,27 +224,23 @@ public final class ModulePasting {
                     }
                 }
 
-                // Replace sign with air in the paste list so it won't be deferred as NBT-rich
                 blockData = Material.AIR.createBlockData();
             }
 
-            // Convert bedrock to stone (unless replacing a solid block)
             if (blockData.getMaterial().equals(Material.BEDROCK)) {
                 if (pasteLocation.getBlock().getType().isSolid()) return;
                 blockData = Material.STONE.createBlockData();
             }
 
-            // Defer complex NBT blocks (dispensers, spawners, etc.) for post-processing via BaseBlock
             if (isNbtRichMaterial(blockData.getMaterial())) {
-                nbtToPlace.add(new NbtPlacement(pasteLocation, baseBlock)); // keep full NBT
-                return; // do NOT add to normal paste list
+                nbtToPlace.add(new NbtPlacement(pasteLocation, baseBlock));
+                return;
             }
 
             if (blockData.getMaterial() == Material.BARREL) {
                 barrelsToFill.add(new BarrelPlacement(pasteLocation, modulesConfigFields));
             }
 
-            // Normal placement path
             pasteableList.add(new Pasteable(pasteLocation, blockData));
         });
 
@@ -297,8 +259,6 @@ public final class ModulePasting {
 
     private void batchPaste(Deque<WFCNode> WFCNodeDeque, List<InterpretedSign> interpretedSigns) {
         List<Pasteable> pasteableList = new ArrayList<>();
-
-        // Collect entity paste info while processing blocks
         List<EntityPasteInfo> entityPasteInfos = new ArrayList<>();
 
         while (!WFCNodeDeque.isEmpty()) {
@@ -307,7 +267,6 @@ public final class ModulePasting {
             Clipboard clipboard = WFCNode.getModulesContainer().getClipboard();
             if (clipboard == null) continue;
 
-            // Rotate the clipboard once and reuse it for both the block paste list and the entity paste
             AffineTransform transform = new AffineTransform().rotateY(normalizeRotation(WFCNode.getModulesContainer().getRotation()));
             Clipboard transformedClipboard;
             try {
@@ -316,67 +275,94 @@ public final class ModulePasting {
                 throw new RuntimeException(e);
             }
 
-            // Process blocks
             ModulesConfigFields modulesConfigField = WFCNode.getModulesContainer().getModulesConfigField();
             pasteableList.addAll(generatePasteMeList(transformedClipboard, WFCNode.getRealLocation(startLocation),
                     interpretedSigns, modulesConfigField));
-
-            // Store entity paste info for later - WITH TRANSFORMED CLIPBOARD
             entityPasteInfos.add(new EntityPasteInfo(transformedClipboard, WFCNode.getRealLocation(startLocation)));
         }
 
-        List<Pasteable> slowBlocks = new ArrayList<>();
-        WorkloadRunnable pasteMeRunnable = new WorkloadRunnable(.1, () -> {
-            WorkloadRunnable vanillaPlacementRunnable = new WorkloadRunnable(.1, () -> {
-                postPasteProcessing(entityPasteInfos);
-            });
+        // Use one WorldEdit edit session for the normal world-based block phase. At runtime
+        // FastAsyncWorldEdit provides the implementation and optimized queued placement engine.
+        // Never interleave Bukkit block writes with an active FAWE session: on Paper 26.2 that
+        // can expose a pending block entity while its matching base block is still observed as air.
+        final EditSession fastEditSession;
+        if (this.createModularWorld) {
+            fastEditSession = WorldEdit.getInstance().newEditSession(BukkitAdapter.adapt(world));
+            fastEditSession.setTrackingHistory(false);
+            fastEditSession.setSideEffectApplier(SideEffectSet.none());
+        } else {
+            fastEditSession = null;
+        }
 
-            for (Pasteable slowBlock : slowBlocks)
-                vanillaPlacementRunnable.addWorkload(() -> {
-                    slowBlock.location.getBlock().setBlockData(slowBlock.blockData, false);
+        List<Pasteable> fallbackBlocks = new ArrayList<>();
+        WorkloadRunnable pasteMeRunnable = new WorkloadRunnable(.1, () -> {
+            if (fastEditSession != null) {
+                try {
+                    fastEditSession.close();
+                } catch (Exception e) {
+                    Logger.warn("Failed to close FAWE structure paste session cleanly: " + e.getMessage());
+                }
+            }
+
+            if (fallbackBlocks.isEmpty()) {
+                Bukkit.getScheduler().runTask(MetadataHandler.PLUGIN,
+                        () -> postPasteProcessing(entityPasteInfos));
+                return;
+            }
+
+            WorkloadRunnable fallbackPlacementRunnable = new WorkloadRunnable(.1, () ->
+                    postPasteProcessing(entityPasteInfos));
+            for (Pasteable fallbackBlock : fallbackBlocks) {
+                fallbackPlacementRunnable.addWorkload(() -> {
+                    try {
+                        fallbackBlock.location.getBlock().setBlockData(fallbackBlock.blockData, false);
+                    } catch (Exception e) {
+                        Logger.warn("Bukkit fallback placement failed at " + fallbackBlock.location + ": " + e.getMessage());
+                    }
                 });
-            vanillaPlacementRunnable.runTaskTimer(MetadataHandler.PLUGIN, 0, 1);
+            }
+            fallbackPlacementRunnable.runTaskTimer(MetadataHandler.PLUGIN, 1, 1);
         });
 
-        // Enable fast path only for world-based generation
-        final boolean fastPathEnabled = this.createModularWorld;
-
         for (Pasteable pasteable : pasteableList) {
-            if (!fastPathEnabled) {
-                // Not world-based generation: force slow placement for EVERYTHING
-                slowBlocks.add(pasteable);
+            if (fastEditSession == null) {
+                fallbackBlocks.add(pasteable);
                 continue;
             }
 
-            // World-based generation: keep original split between fast/slow
-            if (pasteable.blockData.getLightEmission() > 0
-                    || pasteable.blockData instanceof Directional
-                    || pasteable.blockData instanceof Rail
-                    || pasteable.blockData instanceof Sign) {
-                slowBlocks.add(pasteable);
-            } else {
-                pasteMeRunnable.addWorkload(() -> {
-                    NMSManager.getAdapter().setBlockInNativeDataPalette(
-                            pasteable.location.getWorld(),
-                            pasteable.location.getBlockX(),
-                            pasteable.location.getBlockY(),
-                            pasteable.location.getBlockZ(),
-                            pasteable.blockData,
-                            true);
-                });
+            final BlockState worldEditState;
+            try {
+                worldEditState = BukkitAdapter.adapt(pasteable.blockData);
+            } catch (RuntimeException e) {
+                Logger.warn("Could not adapt block data for FAWE at " + pasteable.location + ": " + e.getMessage());
+                fallbackBlocks.add(pasteable);
+                continue;
             }
+
+            if (worldEditState == null) {
+                fallbackBlocks.add(pasteable);
+                continue;
+            }
+
+            pasteMeRunnable.addWorkload(() -> {
+                try {
+                    fastEditSession.setBlock(
+                            BlockVector3.at(
+                                    pasteable.location.getBlockX(),
+                                    pasteable.location.getBlockY(),
+                                    pasteable.location.getBlockZ()),
+                            worldEditState);
+                } catch (WorldEditException | RuntimeException e) {
+                    Logger.warn("FAWE placement failed at " + pasteable.location + ": " + e.getMessage());
+                    fallbackBlocks.add(pasteable);
+                }
+            });
         }
 
         pasteMeRunnable.runTaskTimer(MetadataHandler.PLUGIN, 0, 1);
     }
 
     private void postPasteProcessing(List<EntityPasteInfo> entityPasteInfos) {
-        if (createModularWorld) {
-            createModularWorld(world, worldFolder);
-            modularWorld.spawnOtherEntities();
-        }
-
-        // 1) Paste deferred NBT-rich blocks (dispenser, spawner, etc.) with WE so NBT is preserved
         if (!nbtToPlace.isEmpty()) {
             com.sk89q.worldedit.world.World adaptedWorld = BukkitAdapter.adapt(world);
             try (EditSession editSession = WorldEdit.getInstance().newEditSession(adaptedWorld)) {
@@ -387,10 +373,9 @@ public final class ModulePasting {
                     BlockVector3 wp = BlockVector3.at(
                             np.location().getBlockX(),
                             np.location().getBlockY(),
-                            np.location().getBlockZ()
-                    );
+                            np.location().getBlockZ());
                     try {
-                        editSession.setBlock(wp, np.baseBlock()); // BaseBlock carries NBT
+                        editSession.setBlock(wp, np.baseBlock());
                     } catch (WorldEditException e) {
                         Logger.warn("Failed to set NBT block at " + np.location() + ": " + e.getMessage());
                     }
@@ -398,15 +383,26 @@ public final class ModulePasting {
             } catch (Exception e) {
                 Logger.warn("Failed NBT post-paste session: " + e.getMessage());
             }
+
+            // FAWE may finish queued block-entity work as the edit session closes. Continue one
+            // server tick later before Bukkit reads/updates containers or other block state.
+            Bukkit.getScheduler().runTask(MetadataHandler.PLUGIN,
+                    () -> finishPostPasteProcessing(entityPasteInfos));
+            return;
         }
 
-        // 2) Paste entities from schematics (armor stands, etc.)
+        finishPostPasteProcessing(entityPasteInfos);
+    }
+
+    private void finishPostPasteProcessing(List<EntityPasteInfo> entityPasteInfos) {
+        if (createModularWorld) {
+            createModularWorld(world, worldFolder);
+            modularWorld.spawnOtherEntities();
+        }
+
         pasteArmorStandsForBatch(entityPasteInfos);
 
-        // 3) Fill chests placed by [chest]/[trapped_chest] signs
         if (!chestsToPlace.isEmpty()) {
-            // Loop-invariant: every chest here uses the generator's treasure file, so resolve it
-            // once (the barrel loop below already memoizes the same way)
             String treasureFilename = moduleGeneratorsConfigFields.getTreasureFile();
             TreasureConfigFields treasureConfigFields = TreasureConfig.getConfigFields(treasureFilename);
             ChestContents chestContents = treasureConfigFields == null ? null : treasureConfigFields.getChestContents();
@@ -429,7 +425,6 @@ public final class ModulePasting {
             }
         }
 
-        // 4) Fill barrels with loot
         if (moduleGeneratorsConfigFields.isGenerateLootInBarrels() && !barrelsToFill.isEmpty()) {
             Map<String, ChestContents> contentsByTreasure = new HashMap<>();
             Set<String> warnedMissingTreasures = new HashSet<>();
@@ -468,7 +463,6 @@ public final class ModulePasting {
             }
         }
 
-        // 5) Spawn entities last
         for (EntitySpawn entitySpawn : entitiesToSpawn) {
             try {
                 LivingEntity entity = (LivingEntity) world.spawnEntity(entitySpawn.location, entitySpawn.entityType);
@@ -480,7 +474,6 @@ public final class ModulePasting {
         }
     }
 
-    // Helper method to paste entities for all collected clipboards
     private void pasteArmorStandsForBatch(List<EntityPasteInfo> entityPasteInfos) {
         for (EntityPasteInfo info : entityPasteInfos) {
             try {
@@ -498,7 +491,6 @@ public final class ModulePasting {
     private record NbtPlacement(Location location, BaseBlock baseBlock) {
     }
 
-    // Record to hold entity paste information - now with transformed clipboard
     private record EntityPasteInfo(Clipboard clipboard, Location location) {
     }
 
