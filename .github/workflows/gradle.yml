@@ -6,9 +6,9 @@ name: Java CI with Gradle
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "**" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "**" ]
   workflow_dispatch:
 
 concurrency:
@@ -87,6 +87,13 @@ jobs:
           test -f build/libs/BetterStructures.jar
           cp build/libs/BetterStructures.jar build/libs/BetterStructures-2.7.0-Albion.jar
           ls -lh build/libs/BetterStructures.jar build/libs/BetterStructures-2.7.0-Albion.jar
+
+      - name: Upload raw JAR artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/libs/BetterStructures-2.7.0-Albion.jar
+          archive: false
+          if-no-files-found: error
 
       - name: Publish raw JAR release
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
