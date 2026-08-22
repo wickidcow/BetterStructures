@@ -56,6 +56,19 @@ public class ValidWorldsConfig extends ConfigurationFile {
         return VALID_WORLDS_KEY + "." + worldName;
     }
 
+    public static void setWorldValidity(World world, boolean valid) {
+        if (world == null) return;
+        setWorldValidity(world.getName(), valid);
+    }
+
+    public static void setWorldValidity(String worldName, boolean valid) {
+        if (instance == null || worldName == null || worldName.isBlank()) return;
+        getOrCreateValidWorldsSection();
+        instance.fileConfiguration.set(validWorldsPath(worldName), valid);
+        validWorlds.put(worldName, valid);
+        ConfigurationEngine.fileSaverCustomValues(instance.fileConfiguration, instance.file);
+    }
+
     public static void unregisterWorld(World world) {
         if (world == null) return;
         validWorlds.remove(world.getName());
