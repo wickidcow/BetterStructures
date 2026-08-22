@@ -35,6 +35,35 @@ public class ValidWorldsConfig extends ConfigurationFile {
         registerWorldName(world.getName(), whitelistNewWorlds, true);
     }
 
+    /**
+     * Explicitly enables or disables BetterStructures generation for a world.
+     * Intended for world-generator plugins that need to own their structure layer.
+     * The change updates both the runtime cache and ValidWorlds.yml immediately.
+     *
+     * @param world world to update
+     * @param valid whether BetterStructures should scan new chunks in this world
+     * @return true when the setting was applied
+     */
+    public static boolean setWorldValidity(World world, boolean valid) {
+        if (world == null) return false;
+        return setWorldValidity(world.getName(), valid);
+    }
+
+    /**
+     * Explicitly enables or disables BetterStructures generation by world name.
+     *
+     * @param worldName world folder/name to update
+     * @param valid whether BetterStructures should scan new chunks in this world
+     * @return true when the setting was applied
+     */
+    public static boolean setWorldValidity(String worldName, boolean valid) {
+        if (instance == null || worldName == null || worldName.isBlank()) return false;
+        instance.fileConfiguration.set(validWorldsPath(worldName), valid);
+        validWorlds.put(worldName, valid);
+        ConfigurationEngine.fileSaverCustomValues(instance.fileConfiguration, instance.file);
+        return true;
+    }
+
     private static void registerWorldName(String worldName, boolean defaultValue, boolean save) {
         ConfigurationSection validWorldsSection = getOrCreateValidWorldsSection();
         if (!validWorldsSection.contains(worldName)) {
