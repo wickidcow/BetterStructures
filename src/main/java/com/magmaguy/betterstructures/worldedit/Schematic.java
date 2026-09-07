@@ -361,7 +361,7 @@ public class Schematic {
 
     private static void pasteBlock(PasteBlock pasteBlock) {
         if (pasteBlock.blockData() != null) {
-            pasteBlock.block().setBlockData(pasteBlock.blockData());
+            pasteBlock.block().setBlockData(pasteBlock.blockData(), false);
         } else if (pasteBlock.clipboard() != null) {
             try (EditSession editSession = WorldEdit.getInstance().newEditSession(
                     BukkitAdapter.adapt(pasteBlock.block().getLocation().getWorld()))) {
