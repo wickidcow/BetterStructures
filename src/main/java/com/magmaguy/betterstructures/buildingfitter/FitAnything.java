@@ -195,7 +195,7 @@ public class FitAnything {
         for (int y = -1; y > -11; y--) {
             Block block = lowestCorner.clone().add(new Vector(x, y, z)).getBlock();
             if (SurfaceMaterials.ignorable(block.getType())) {
-                block.setType(getPedestalMaterial(!block.getRelative(BlockFace.UP).getType().isSolid()));
+                block.setType(getPedestalMaterial(!block.getRelative(BlockFace.UP).getType().isSolid()), false);
             } else {
                 break;
             }
@@ -210,7 +210,7 @@ public class FitAnything {
             Block block = highestCorner.clone().add(new Vector(x, y, z)).getBlock();
             if (SurfaceMaterials.ignorable(block.getType()) && !block.getType().isAir()) {
                 detectedTreeElement = true;
-                block.setType(Material.AIR);
+                block.setType(Material.AIR, false);
             }
         }
     }
@@ -259,7 +259,7 @@ public class FitAnything {
 
     private void spawnVanillaEntity(Vector entityPosition) {
         Location signLocation = LocationProjector.project(location, schematicOffset, entityPosition).clone();
-        signLocation.getBlock().setType(Material.AIR);
+        signLocation.getBlock().setType(Material.AIR, false);
         signLocation.add(new Vector(0.5, 0, 0.5));
 
         // The old code force-loaded the chunk here even though the structure
@@ -281,7 +281,7 @@ public class FitAnything {
 
     private boolean spawnEliteEntity(Vector elitePosition) {
         Location eliteLocation = LocationProjector.project(location, schematicOffset, elitePosition).clone();
-        eliteLocation.getBlock().setType(Material.AIR);
+        eliteLocation.getBlock().setType(Material.AIR, false);
         eliteLocation.add(new Vector(0.5, 0, 0.5));
         String bossFilename = schematicContainer.getEliteMobsSpawns().get(elitePosition);
 
@@ -305,7 +305,7 @@ public class FitAnything {
 
     private boolean spawnMythicEntity(Vector mythicPosition) {
         Location mobLocation = LocationProjector.project(location, schematicOffset, mythicPosition).clone();
-        mobLocation.getBlock().setType(Material.AIR);
+        mobLocation.getBlock().setType(Material.AIR, false);
         return MythicMobs.Spawn(
                 mobLocation,
                 schematicContainer.getMythicMobsSpawns().get(mythicPosition));
