@@ -12,17 +12,21 @@ import java.util.ArrayList;
 import java.util.Collections;
 
 public class Topology {
+    // Topology samples can each descend through tree/foliage blocks, making a
+    // dense 2D scan surprisingly expensive for very large schematics.
+    private static final long MAX_TOPOLOGY_SAMPLES = 512L;
+
     public static double scan(double startingScore, int scanStep, Clipboard schematicClipboard, Location iteratedLocation, Vector schematicOffset) {
-        //if (schematicOffset == null) Bukkit.getLogger().info("oops the schematic offset is null");
         double score = startingScore;
         int width = schematicClipboard.getDimensions().x();
         int depth = schematicClipboard.getDimensions().z();
+        int effectiveScanStep = effectiveScanStep(scanStep, width, depth);
 
         ArrayList<Integer> heights = new ArrayList<>();
 
         //Scans the topology to find a mesh of the highest locations for the entirety of the x and z axi. Also does the water / lava scan
-        score = scanHighestLocations(width, depth, scanStep, iteratedLocation, schematicOffset, heights, score);
-        if (score == 0) return 0;
+        score = scanHighestLocations(width, depth, effectiveScanStep, iteratedLocation, schematicOffset, heights, score);
+        if (score == 0 || heights.isEmpty()) return 0;
 
         //Detects extreme height differences which would immediately disqualify this scan
         score = scanExtremeHeightDifferences(heights, score);
@@ -37,10 +41,28 @@ public class Topology {
         return score;
     }
 
+    static int effectiveScanStep(int requestedScanStep, int width, int depth) {
+        int step = Math.max(1, requestedScanStep);
+        int largestDimension = Math.max(width, depth);
+        while (step < largestDimension && estimatedSampleCount(width, depth, step) > MAX_TOPOLOGY_SAMPLES) {
+            step++;
+        }
+        return step;
+    }
+
+    private static long estimatedSampleCount(int width, int depth, int step) {
+        return ceilDiv(width, step) * ceilDiv(depth, step);
+    }
+
+    private static long ceilDiv(int value, int divisor) {
+        if (value <= 0) return 0L;
+        return ((long) value + divisor - 1L) / divisor;
+    }
+
     private static double scanHighestLocations(int width, int depth, int scanStep, Location iteratedLocation, Vector schematicOffset, ArrayList<Integer> heights, double score) {
         //ceil, not floor: the loops below visit ceil(width/step) x ceil(depth/step) points, and
         //undercounting the total made each water/lava hit subtract more than its intended share
-        int totalPointAmount = (int) (Math.ceil(width / (double) scanStep) * Math.ceil(depth / (double) scanStep));
+        long totalPointAmount = Math.max(1L, estimatedSampleCount(width, depth, scanStep));
         for (int x = 0; x < width; x += scanStep) {
             for (int z = 0; z < depth; z += scanStep) {
                 Location projectedLocation = LocationProjector.project(iteratedLocation, schematicOffset, new Vector(x, 0, z));
@@ -125,7 +147,7 @@ public class Topology {
         return score;
     }
 
-    //Determines and sets the average height for the paste
+    //Determines and sets the average height on the topology
     private static int setToAverageHeight(ArrayList<Integer> heights, Location iteratedLocation) {
         //Find the average height
         int averageFloorLevel = 0;
@@ -139,9 +161,8 @@ public class Topology {
         return averageFloorLevel;
     }
 
-    //Scores the terrain variation, less extreme is better
+    //Scores the variation in terrain height, less extreme is better
     private static double scoreTerrainHeightVariation(ArrayList<Integer> heights, int averageFloorLevel, double score) {
-        //Score the difference between the average height and the heights of each individual location
         for (Integer integer : heights) {
             int difference = Math.abs(averageFloorLevel - integer);
             if (difference < 3) continue;
