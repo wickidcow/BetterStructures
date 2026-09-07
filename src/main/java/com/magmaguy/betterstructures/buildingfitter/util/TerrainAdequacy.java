@@ -10,6 +10,11 @@ import org.bukkit.Material;
 import org.bukkit.util.Vector;
 
 public class TerrainAdequacy {
+    // A large schematic previously performed a full 3D sample every three
+    // blocks for every candidate fit. Cap the sample count while preserving the
+    // original density for normal-sized structures.
+    private static final long MAX_TERRAIN_SAMPLES = 1024L;
+
     public enum ScanType {
         SURFACE,
         UNDERGROUND,
@@ -21,6 +26,7 @@ public class TerrainAdequacy {
         int width = schematicClipboard.getDimensions().x();
         int depth = schematicClipboard.getDimensions().z();
         int height = schematicClipboard.getDimensions().y();
+        int effectiveScanStep = effectiveScanStep(scanStep, width, height, depth);
 
         //Clipboard reads are absolute: the region spans [minimumPoint, maximumPoint], and reads
         //outside it silently return air. Zero-based coordinates must be offset by the minimum
@@ -30,9 +36,9 @@ public class TerrainAdequacy {
         int totalCount = 0;
         int negativeCount = 0;
 
-        for (int x = 0; x < width; x += scanStep) {
-            for (int y = 0; y < height; y += scanStep) {
-                for (int z = 0; z < depth; z += scanStep) {
+        for (int x = 0; x < width; x += effectiveScanStep) {
+            for (int y = 0; y < height; y += effectiveScanStep) {
+                for (int z = 0; z < depth; z += effectiveScanStep) {
                     BlockState schematicBlockStateAtPosition = schematicClipboard.getBlock(BlockVector3.at(x, y, z).add(minimumPoint));
                     Material schematicMaterialAtPosition = WorldEditUtils.adaptMaterial(schematicBlockStateAtPosition);
                     boolean schematicBlockIsAir = WorldEditUtils.isAir(schematicBlockStateAtPosition);
@@ -45,9 +51,26 @@ public class TerrainAdequacy {
             }
         }
 
-        double score = 100 - negativeCount * 100D / (double) totalCount;
+        if (totalCount == 0) return 0;
+        return 100 - negativeCount * 100D / (double) totalCount;
+    }
 
-        return score;
+    static int effectiveScanStep(int requestedScanStep, int width, int height, int depth) {
+        int step = Math.max(1, requestedScanStep);
+        int largestDimension = Math.max(width, Math.max(height, depth));
+        while (step < largestDimension && estimatedSampleCount(width, height, depth, step) > MAX_TERRAIN_SAMPLES) {
+            step++;
+        }
+        return step;
+    }
+
+    private static long estimatedSampleCount(int width, int height, int depth, int step) {
+        return ceilDiv(width, step) * ceilDiv(height, step) * ceilDiv(depth, step);
+    }
+
+    private static long ceilDiv(int value, int divisor) {
+        if (value <= 0) return 0L;
+        return ((long) value + divisor - 1L) / divisor;
     }
 
     private static boolean isBlockAdequate(Location projectedWorldLocation, boolean schematicBlockIsAir, boolean schematicBlockIsLiquid, int floorHeight, ScanType scanType) {
@@ -79,6 +102,5 @@ public class TerrainAdequacy {
             default:
                 return false;
         }
-
     }
 }
