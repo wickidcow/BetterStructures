@@ -42,6 +42,15 @@ public class Schematic {
     private static BukkitTask activePasteTask = null;
     private static PasteOperation activePasteOperation = null;
 
+    // Albion performance guard: generation is deliberately capped below the
+    // legacy configurable paste percentage so an old 0.20 config cannot consume
+    // ~10 ms of every tick while players are exploring fresh terrain.
+    private static final double HARD_MAX_TICK_FRACTION = 0.05D;
+    private static final double LOAD_PAUSE_TPS = 18.0D;
+    private static final double LOAD_RESUME_TPS = 19.0D;
+    private static final long MIN_WORK_BUDGET_NANOS = 250_000L;
+    private static boolean pausedForServerLoad = false;
+
     private static final EnumSet<Material> NBT_PASTED_MATERIALS = EnumSet.noneOf(Material.class);
 
     static {
@@ -106,8 +115,8 @@ public class Schematic {
             }
             if (sanitizedInput.replacedBedPaletteEntries() > 0) {
                 Logger.info("Replaced " + sanitizedInput.replacedBedPaletteEntries()
-                        + " legacy minecraft:bed palette entr" +
-                        (sanitizedInput.replacedBedPaletteEntries() == 1 ? "y" : "ies")
+                        + " legacy minecraft:bed palette entr"
+                        + (sanitizedInput.replacedBedPaletteEntries() == 1 ? "y" : "ies")
                         + " with minecraft:red_bed in " + schematicFile.getName() + ".");
             }
         } catch (IOException e) {
@@ -194,17 +203,40 @@ public class Schematic {
         }
     }
 
+    /**
+     * Compatibility overload for callers that only need a one-shot callback.
+     * BetterStructures structure generation uses the incremental overload so
+     * pedestal/tree/container/entity post-processing shares this same budget.
+     */
     public static void pasteSchematic(
             Clipboard schematicClipboard,
             Location location,
             Vector schematicOffset,
             Function<Boolean, Material> pedestalMaterialProvider,
             Runnable onComplete) {
+        IncrementalWork postWork = onComplete == null ? null : new SingleStepWork(onComplete);
+        pasteSchematic(
+                schematicClipboard,
+                location,
+                schematicOffset,
+                pedestalMaterialProvider,
+                null,
+                postWork);
+    }
+
+    public static void pasteSchematic(
+            Clipboard schematicClipboard,
+            Location location,
+            Vector schematicOffset,
+            Function<Boolean, Material> pedestalMaterialProvider,
+            IncrementalWork prePasteWork,
+            IncrementalWork postPasteWork) {
         pasteQueue.add(new ClipboardPasteOperation(
                 schematicClipboard,
                 location.clone().add(schematicOffset),
                 pedestalMaterialProvider,
-                onComplete));
+                prePasteWork,
+                postPasteWork));
         startQueueIfIdle();
     }
 
@@ -213,10 +245,6 @@ public class Schematic {
     }
 
     private static void processNextPaste() {
-        long maxNanosPerTick = Math.max(
-                (long) (50_000_000D * DefaultConfig.getPercentageOfTickUsedForPasting()),
-                2_000_000L);
-
         RuntimeException firstFailure = null;
         int abandoned = 0;
         while (true) {
@@ -238,8 +266,12 @@ public class Schematic {
                             return;
                         }
 
+                        // Do not add structure work while the server is already
+                        // behind. Hysteresis prevents rapid pause/resume flapping.
+                        if (shouldPauseForServerLoad()) return;
+
                         try {
-                            long stopTime = System.nanoTime() + maxNanosPerTick;
+                            long stopTime = System.nanoTime() + getWorkBudgetNanos();
                             boolean processedAtLeastOne = false;
                             while (operation.hasNext() &&
                                     (!processedAtLeastOne || System.nanoTime() < stopTime)) {
@@ -274,6 +306,57 @@ public class Schematic {
                     + " queued BetterStructures paste(s) because their paste task could not be scheduled.");
             throw firstFailure;
         }
+    }
+
+    private static long getWorkBudgetNanos() {
+        double configuredFraction = DefaultConfig.getPercentageOfTickUsedForPasting();
+        if (!Double.isFinite(configuredFraction) || configuredFraction <= 0.0D) {
+            configuredFraction = HARD_MAX_TICK_FRACTION;
+        }
+
+        double fraction = Math.min(configuredFraction, HARD_MAX_TICK_FRACTION);
+
+        // When tick time starts rising but has not yet hit the pause threshold,
+        // taper BetterStructures first instead of competing with gameplay.
+        double loadTps = getLoadTps();
+        double loadMultiplier;
+        if (loadTps < 18.5D) {
+            loadMultiplier = 0.35D;
+        } else if (loadTps < 19.25D) {
+            loadMultiplier = 0.60D;
+        } else if (loadTps < 19.75D) {
+            loadMultiplier = 0.80D;
+        } else {
+            loadMultiplier = 1.0D;
+        }
+
+        return Math.max(
+                (long) (50_000_000D * fraction * loadMultiplier),
+                MIN_WORK_BUDGET_NANOS);
+    }
+
+    private static boolean shouldPauseForServerLoad() {
+        double loadTps = getLoadTps();
+        if (pausedForServerLoad) {
+            if (loadTps >= LOAD_RESUME_TPS) pausedForServerLoad = false;
+        } else if (loadTps < LOAD_PAUSE_TPS) {
+            pausedForServerLoad = true;
+        }
+        return pausedForServerLoad;
+    }
+
+    private static double getLoadTps() {
+        double averageTickTime = Bukkit.getAverageTickTime();
+        if (!Double.isFinite(averageTickTime) || averageTickTime <= 0.0D) return 20.0D;
+        return Math.min(20.0D, 1000.0D / averageTickTime);
+    }
+
+    public static boolean isGenerationPausedForLoad() {
+        return shouldPauseForServerLoad();
+    }
+
+    public static int getQueuedGenerationCount() {
+        return pasteQueue.size() + (activePasteOperation == null ? 0 : 1);
     }
 
     private static void pasteBlock(PasteBlock pasteBlock) {
@@ -318,11 +401,20 @@ public class Schematic {
         activePasteTask = null;
         activePasteOperation = null;
         isDistributedPasting = false;
+        pausedForServerLoad = false;
+    }
+
+    public interface IncrementalWork {
+        boolean hasNext();
+
+        void runNext();
     }
 
     private interface PasteOperation {
         boolean hasNext();
+
         void pasteNext();
+
         void onComplete();
     }
 
@@ -330,37 +422,75 @@ public class Schematic {
         private final Clipboard clipboard;
         private final Location adjustedLocation;
         private final Function<Boolean, Material> pedestalMaterialProvider;
+        private final IncrementalWork prePasteWork;
         private final PasteCursor cursor;
-        private final Runnable onComplete;
+        private final IncrementalWork postPasteWork;
 
         private ClipboardPasteOperation(
                 Clipboard clipboard,
                 Location adjustedLocation,
                 Function<Boolean, Material> pedestalMaterialProvider,
-                Runnable onComplete) {
+                IncrementalWork prePasteWork,
+                IncrementalWork postPasteWork) {
             this.clipboard = clipboard;
             this.adjustedLocation = adjustedLocation;
             this.pedestalMaterialProvider = pedestalMaterialProvider;
+            this.prePasteWork = prePasteWork;
             this.cursor = new PasteCursor(
                     clipboard.getDimensions().x(),
                     clipboard.getDimensions().y(),
                     clipboard.getDimensions().z());
-            this.onComplete = onComplete;
+            this.postPasteWork = postPasteWork;
         }
 
         @Override
         public boolean hasNext() {
-            return cursor.hasNext();
+            return (prePasteWork != null && prePasteWork.hasNext())
+                    || cursor.hasNext()
+                    || (postPasteWork != null && postPasteWork.hasNext());
         }
 
         @Override
         public void pasteNext() {
-            pasteClipboardBlock(clipboard, adjustedLocation, pedestalMaterialProvider, cursor.next());
+            if (prePasteWork != null && prePasteWork.hasNext()) {
+                prePasteWork.runNext();
+                return;
+            }
+
+            if (cursor.hasNext()) {
+                pasteClipboardBlock(clipboard, adjustedLocation, pedestalMaterialProvider, cursor.next());
+                return;
+            }
+
+            if (postPasteWork != null && postPasteWork.hasNext()) {
+                postPasteWork.runNext();
+            }
         }
 
         @Override
         public void onComplete() {
-            if (onComplete != null) onComplete.run();
+            // All completion work is part of the incremental operation.
+        }
+    }
+
+    private static final class SingleStepWork implements IncrementalWork {
+        private final Runnable runnable;
+        private boolean pending = true;
+
+        private SingleStepWork(Runnable runnable) {
+            this.runnable = runnable;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return pending;
+        }
+
+        @Override
+        public void runNext() {
+            if (!pending) return;
+            pending = false;
+            runnable.run();
         }
     }
 
