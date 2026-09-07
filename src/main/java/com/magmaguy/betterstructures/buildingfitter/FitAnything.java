@@ -27,11 +27,16 @@ import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
-import org.bukkit.entity.*;
-import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.entity.EnderCrystal;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
 import org.bukkit.util.Vector;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
@@ -101,124 +106,40 @@ public class FitAnything {
         Bukkit.getServer().getPluginManager().callEvent(buildPlaceEvent);
         if (buildPlaceEvent.isCancelled()) return;
 
-        FitAnything fitAnything = this;
+        initializePedestalMaterial(location);
 
-        // Set pedestal material before the paste so bedrock blocks get replaced correctly
-        assignPedestalMaterial(location);
-        if (pedestalMaterial == null)
-            switch (location.getWorld().getEnvironment()) {
-                case NETHER:
-                    pedestalMaterial = Material.NETHERRACK;
-                    break;
-                case THE_END:
-                    pedestalMaterial = Material.END_STONE;
-                    break;
-                default:
-                    pedestalMaterial = Material.STONE;
-            }
-
-        // Create a function to provide pedestal material
         Function<Boolean, Material> pedestalMaterialProvider = this::getPedestalMaterial;
 
-        // Paste the schematic with the moved logic
+        // Pedestal material sampling, the actual schematic paste, pedestal/tree
+        // cleanup, loot and entity setup are now one serialized operation. This
+        // keeps every expensive stage under Schematic's shared per-tick budget.
         Schematic.pasteSchematic(
                 schematicClipboard,
                 location,
                 schematicOffset,
                 pedestalMaterialProvider,
-                onPasteComplete(fitAnything, location)
+                new PedestalSamplingWork(location),
+                new PostPasteWork(location)
         );
     }
 
-    private BukkitRunnable onPasteComplete(FitAnything fitAnything, Location location) {
-        return new BukkitRunnable() {
-            @Override
-            public void run() {
-                if (DefaultConfig.isNewBuildingWarn()) {
-                    String structureTypeString = fitAnything.structureType.toString().toLowerCase(Locale.ROOT).replace("_", " ");
-                    for (Player player : Bukkit.getOnlinePlayers())
-                        if (player.hasPermission("betterstructures.warn"))
-                            player.spigot().sendMessage(
-                                    SpigotMessage.commandHoverMessage("[BetterStructures] New " + structureTypeString + " building generated! Click to teleport. Do \"/betterstructures silent\" to stop getting warnings!",
-                                            "Click to teleport to " + location.getWorld().getName() + ", " + location.getBlockX() + ", " + location.getBlockY() + ", " + location.getBlockZ() + "\n Schem name: " + schematicContainer.getConfigFilename(),
-                                            "/betterstructures teleport " + location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ())
-                            );
-                }
+    private void initializePedestalMaterial(Location location) {
+        if (!(this instanceof FitAirBuilding)) {
+            pedestalMaterial = schematicContainer.getSchematicConfigField().getPedestalMaterial();
+        }
 
-                if (!(fitAnything instanceof FitAirBuilding)) {
-                    try {
-                        addPedestal(location);
-                    } catch (Exception exception) {
-                        Logger.warn("Failed to correctly assign pedestal material!");
-                        exception.printStackTrace();
-                    }
-                    try {
-                        if (fitAnything instanceof FitSurfaceBuilding)
-                            clearTrees(location);
-                    } catch (Exception exception) {
-                        Logger.warn("Failed to correctly clear trees!");
-                        exception.printStackTrace();
-                    }
-                }
-                try {
-                    fillChests();
-                } catch (Exception exception) {
-                    Logger.warn("Failed to correctly fill chests!");
-                    exception.printStackTrace();
-                }
-                try {
-                    spawnEntities();
-                } catch (Exception exception) {
-                    Logger.warn("Failed to correctly spawn entities!");
-                    exception.printStackTrace();
-                }
-                try{
-                    spawnProps(fitAnything.schematicClipboard);
-                } catch (Exception exception) {
-                    Logger.warn("Failed to correctly spawn props!");
-                    exception.printStackTrace();
-                }
-            }
-        };
-    }
+        if (pedestalMaterial != null) return;
 
-    private void spawnProps(Clipboard clipboard) {
-        // Don't add schematicOffset here - let pasteArmorStandsOnlyFromTransformed handle the alignment
-        WorldEditUtils.pasteArmorStandsOnlyFromTransformed(clipboard, location.clone().add(schematicOffset));
-    }
-
-    private void assignPedestalMaterial(Location location) {
-        if (this instanceof FitAirBuilding) return;
-        pedestalMaterial = schematicContainer.getSchematicConfigField().getPedestalMaterial();
-        Location lowestCorner = location.clone().add(schematicOffset);
-
-        int maxSurfaceHeightScan = 20;
-
-        //get underground pedestal blocks
-        for (int x = 0; x < schematicClipboard.getDimensions().x(); x += scanStep)
-            for (int z = 0; z < schematicClipboard.getDimensions().z(); z += scanStep)
-                for (int y = 0; y < schematicClipboard.getDimensions().y(); y += scanStep) {
-                    Block groundBlock = lowestCorner.clone().add(new Vector(x, y, z)).getBlock();
-                    Block aboveBlock = groundBlock.getRelative(BlockFace.UP);
-
-                    if (aboveBlock.getType().isSolid() && groundBlock.getType().isSolid() && !SurfaceMaterials.ignorable(groundBlock.getType()))
-                        undergroundPedestalMaterials.merge(groundBlock.getType(), 1, Integer::sum);
-                }
-
-        //get above ground pedestal blocks, if any
-        for (int x = 0; x < schematicClipboard.getDimensions().x(); x += scanStep)
-            for (int z = 0; z < schematicClipboard.getDimensions().z(); z += scanStep) {
-                boolean scanUp = lowestCorner.clone().add(new Vector(x, schematicClipboard.getDimensions().y(), z)).getBlock().getType().isSolid();
-                for (int y = 0; y < maxSurfaceHeightScan; y++) {
-                    Block groundBlock = lowestCorner.clone().add(new Vector(x, scanUp ? y : -y, z)).getBlock();
-                    Block aboveBlock = groundBlock.getRelative(BlockFace.UP);
-
-                    if (!aboveBlock.getType().isSolid() && groundBlock.getType().isSolid()) {
-                        surfacePedestalMaterials.merge(groundBlock.getType(), 1, Integer::sum);
-                        break;
-                    }
-                }
-            }
+        switch (location.getWorld().getEnvironment()) {
+            case NETHER:
+                pedestalMaterial = Material.NETHERRACK;
+                break;
+            case THE_END:
+                pedestalMaterial = Material.END_STONE;
+                break;
+            default:
+                pedestalMaterial = Material.STONE;
+        }
     }
 
     private Material getPedestalMaterial(boolean isPedestalSurface) {
@@ -232,13 +153,9 @@ public class FitAnything {
     }
 
     public Material getRandomMaterialBasedOnWeight(HashMap<Material, Integer> weightedMaterials) {
-        // Calculate the total weight
         int totalWeight = weightedMaterials.values().stream().mapToInt(Integer::intValue).sum();
-
-        // Generate a random number in the range of 0 (inclusive) to totalWeight (exclusive)
         int randomNumber = ThreadLocalRandom.current().nextInt(totalWeight);
 
-        // Iterate through the materials and pick one based on the random number
         int cumulativeWeight = 0;
         for (Map.Entry<Material, Integer> entry : weightedMaterials.entrySet()) {
             cumulativeWeight += entry.getValue();
@@ -247,141 +164,464 @@ public class FitAnything {
             }
         }
 
-        // Fallback return, should not occur if the map is not empty and weights are positive
         throw new IllegalStateException("Weighted random selection failed.");
     }
 
-    private void addPedestal(Location location) {
-        if (this instanceof FitAirBuilding || this instanceof FitLiquidBuilding) return;
-        Location lowestCorner = location.clone().add(schematicOffset);
-        for (int x = 0; x < schematicClipboard.getDimensions().x(); x++)
-            for (int z = 0; z < schematicClipboard.getDimensions().z(); z++) {
-                //Only add pedestals for areas with a solid floor, some schematics can have rounded air edges to better fit terrain
-                Block groundBlock = lowestCorner.clone().add(new Vector(x, 0, z)).getBlock();
-                if (groundBlock.getType().isAir()) continue;
-                for (int y = -1; y > -11; y--) {
-                    Block block = lowestCorner.clone().add(new Vector(x, y, z)).getBlock();
-                    if (SurfaceMaterials.ignorable(block.getType()))
-                        block.setType(getPedestalMaterial(!block.getRelative(BlockFace.UP).getType().isSolid()));
-                    else {
-                        //Pedestal only fills until it hits the first solid block
-                        break;
-                    }
-                }
-            }
+    private void warnAdmins(Location buildLocation) {
+        if (!DefaultConfig.isNewBuildingWarn()) return;
+
+        String structureTypeString = structureType.toString().toLowerCase(Locale.ROOT).replace("_", " ");
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (!player.hasPermission("betterstructures.warn")) continue;
+            player.spigot().sendMessage(
+                    SpigotMessage.commandHoverMessage(
+                            "[BetterStructures] New " + structureTypeString + " building generated! Click to teleport. Do \"/betterstructures silent\" to stop getting warnings!",
+                            "Click to teleport to " + buildLocation.getWorld().getName() + ", " + buildLocation.getBlockX() + ", " + buildLocation.getBlockY() + ", " + buildLocation.getBlockZ()
+                                    + "\n Schem name: " + schematicContainer.getConfigFilename(),
+                            "/betterstructures teleport " + buildLocation.getWorld().getName() + " " + buildLocation.getBlockX() + " " + buildLocation.getBlockY() + " " + buildLocation.getBlockZ())
+            );
+        }
     }
 
-    private void clearTrees(Location location) {
-        Location highestCorner = location.clone().add(schematicOffset).add(new Vector(0, schematicClipboard.getDimensions().y() + 1, 0));
-        for (int x = 0; x < schematicClipboard.getDimensions().x(); x++)
-            for (int z = 0; z < schematicClipboard.getDimensions().z(); z++) {
-                //Reset per column: each column scans upward until it finds a layer with no tree element
-                boolean detectedTreeElement = true;
-                for (int y = 0; y < 31; y++) {
-                    if (!detectedTreeElement) break;
-                    detectedTreeElement = false;
-                    Block block = highestCorner.clone().add(new Vector(x, y, z)).getBlock();
-                    if (SurfaceMaterials.ignorable(block.getType()) && !block.getType().isAir()) {
-                        detectedTreeElement = true;
-                        block.setType(Material.AIR);
-                    }
-                }
-            }
+    private void spawnProps(Clipboard clipboard) {
+        // Don't add schematicOffset here - let pasteArmorStandsOnlyFromTransformed handle the alignment
+        WorldEditUtils.pasteArmorStandsOnlyFromTransformed(clipboard, location.clone().add(schematicOffset));
     }
 
-    private void fillChests() {
+    private void addPedestalColumn(Location lowestCorner, int x, int z) {
+        Block groundBlock = lowestCorner.clone().add(new Vector(x, 0, z)).getBlock();
+        if (groundBlock.getType().isAir()) return;
+
+        for (int y = -1; y > -11; y--) {
+            Block block = lowestCorner.clone().add(new Vector(x, y, z)).getBlock();
+            if (SurfaceMaterials.ignorable(block.getType())) {
+                block.setType(getPedestalMaterial(!block.getRelative(BlockFace.UP).getType().isSolid()));
+            } else {
+                break;
+            }
+        }
+    }
+
+    private void clearTreeColumn(Location highestCorner, int x, int z) {
+        boolean detectedTreeElement = true;
+        for (int y = 0; y < 31; y++) {
+            if (!detectedTreeElement) break;
+            detectedTreeElement = false;
+            Block block = highestCorner.clone().add(new Vector(x, y, z)).getBlock();
+            if (SurfaceMaterials.ignorable(block.getType()) && !block.getType().isAir()) {
+                detectedTreeElement = true;
+                block.setType(Material.AIR);
+            }
+        }
+    }
+
+    private void fillChest(Vector chestPosition) {
         GeneratorConfigFields gen = schematicContainer.getGeneratorConfigFields();
         boolean barrelsEnabled = gen.isGenerateLootInBarrels() && gen.getBarrelContents() != null;
         boolean chestsEnabled = gen.getChestContents() != null;
         if (!barrelsEnabled && !chestsEnabled) return;
 
-        for (Vector chestPosition : schematicContainer.getChestLocations()) {
-            Location chestLocation = LocationProjector.project(location, schematicOffset, chestPosition);
-            if (!(chestLocation.getBlock().getState() instanceof Container container)) {
-                Logger.warn("Expected a container for " + chestLocation.getBlock().getType() + " but didn't get it. Skipping this loot!");
-                continue;
-            }
+        Location chestLocation = LocationProjector.project(location, schematicOffset, chestPosition);
+        if (!(chestLocation.getBlock().getState() instanceof Container container)) {
+            Logger.warn("Expected a container for " + chestLocation.getBlock().getType() + " but didn't get it. Skipping this loot!");
+            return;
+        }
 
-            boolean isBarrel = container.getBlock().getType() == Material.BARREL;
-            if (isBarrel && !barrelsEnabled) continue;
-            if (!isBarrel && !chestsEnabled) continue;
+        boolean isBarrel = container.getBlock().getType() == Material.BARREL;
+        if (isBarrel && !barrelsEnabled) return;
+        if (!isBarrel && !chestsEnabled) return;
 
-            ChestContents contents;
-            String treasureFilename;
-            if (isBarrel) {
-                contents = schematicContainer.getBarrelContents();
-                String schematicBarrelFile = schematicContainer.getSchematicConfigField().getBarrelTreasureFilename();
-                treasureFilename = (schematicBarrelFile != null && !schematicBarrelFile.isEmpty())
-                        ? schematicBarrelFile
-                        : gen.getBarrelTreasureFilename();
-            } else {
-                contents = schematicContainer.getChestContents();
-                String schematicTreasureFile = schematicContainer.getSchematicConfigField().getTreasureFile();
-                treasureFilename = (schematicTreasureFile != null && !schematicTreasureFile.isEmpty())
-                        ? schematicTreasureFile
-                        : gen.getTreasureFilename();
-            }
+        ChestContents contents;
+        String treasureFilename;
+        if (isBarrel) {
+            contents = schematicContainer.getBarrelContents();
+            String schematicBarrelFile = schematicContainer.getSchematicConfigField().getBarrelTreasureFilename();
+            treasureFilename = (schematicBarrelFile != null && !schematicBarrelFile.isEmpty())
+                    ? schematicBarrelFile
+                    : gen.getBarrelTreasureFilename();
+        } else {
+            contents = schematicContainer.getChestContents();
+            String schematicTreasureFile = schematicContainer.getSchematicConfigField().getTreasureFile();
+            treasureFilename = (schematicTreasureFile != null && !schematicTreasureFile.isEmpty())
+                    ? schematicTreasureFile
+                    : gen.getTreasureFilename();
+        }
 
-            if (contents == null) continue;
-            contents.rollChestContents(container);
+        if (contents == null) return;
+        contents.rollChestContents(container);
 
-            ChestFillEvent chestFillEvent = new ChestFillEvent(container, treasureFilename);
-            Bukkit.getServer().getPluginManager().callEvent(chestFillEvent);
-            if (!chestFillEvent.isCancelled()) {
-                container.update(true);
-            }
+        ChestFillEvent chestFillEvent = new ChestFillEvent(container, treasureFilename);
+        Bukkit.getServer().getPluginManager().callEvent(chestFillEvent);
+        if (!chestFillEvent.isCancelled()) {
+            container.update(true);
         }
     }
 
-    private void spawnEntities() {
-        for (Vector entityPosition : schematicContainer.getVanillaSpawns().keySet()) {
-            Location signLocation = LocationProjector.project(location, schematicOffset, entityPosition).clone();
-            signLocation.getBlock().setType(Material.AIR);
-            //If mobs spawn in corners they might choke on adjacent walls
-            signLocation.add(new Vector(0.5, 0, 0.5));
-            //I think FAWE is messing with this
-            signLocation.getChunk().load();
-            Entity entity = signLocation.getWorld().spawnEntity(signLocation, schematicContainer.getVanillaSpawns().get(entityPosition));
-            entity.setPersistent(true);
-            if (entity instanceof LivingEntity) {
-                ((LivingEntity) entity).setRemoveWhenFarAway(false);
+    private void spawnVanillaEntity(Vector entityPosition) {
+        Location signLocation = LocationProjector.project(location, schematicOffset, entityPosition).clone();
+        signLocation.getBlock().setType(Material.AIR);
+        signLocation.add(new Vector(0.5, 0, 0.5));
+
+        // The old code force-loaded the chunk here even though the structure
+        // paste already touched it. Avoiding that redundant synchronous load is
+        // important while a player is rapidly generating terrain.
+        Entity entity = signLocation.getWorld().spawnEntity(
+                signLocation,
+                schematicContainer.getVanillaSpawns().get(entityPosition));
+        entity.setPersistent(true);
+        if (entity instanceof LivingEntity livingEntity) {
+            livingEntity.setRemoveWhenFarAway(false);
+        }
+
+        if (!VersionChecker.serverVersionOlderThan(21, 0)
+                && entity.getType().equals(EntityType.END_CRYSTAL)) {
+            ((EnderCrystal) entity).setShowingBottom(false);
+        }
+    }
+
+    private boolean spawnEliteEntity(Vector elitePosition) {
+        Location eliteLocation = LocationProjector.project(location, schematicOffset, elitePosition).clone();
+        eliteLocation.getBlock().setType(Material.AIR);
+        eliteLocation.add(new Vector(0.5, 0, 0.5));
+        String bossFilename = schematicContainer.getEliteMobsSpawns().get(elitePosition);
+
+        if (!EliteMobs.Spawn(eliteLocation, bossFilename)) return false;
+
+        Location lowestCorner = location.clone().add(schematicOffset);
+        Location highestCorner = lowestCorner.clone().add(new Vector(
+                schematicClipboard.getRegion().getWidth() - 1,
+                schematicClipboard.getRegion().getHeight() - 1,
+                schematicClipboard.getRegion().getLength() - 1));
+        if (DefaultConfig.isProtectEliteMobsRegions()
+                && Bukkit.getPluginManager().getPlugin("WorldGuard") != null
+                && Bukkit.getPluginManager().getPlugin("EliteMobs") != null) {
+            WorldGuard.Protect(lowestCorner, highestCorner, bossFilename, eliteLocation);
+        } else if (!worldGuardWarn) {
+            worldGuardWarn = true;
+            Logger.warn("You are not using WorldGuard, so BetterStructures could not protect a boss arena! Using WorldGuard is recommended to guarantee a fair combat experience.");
+        }
+        return true;
+    }
+
+    private boolean spawnMythicEntity(Vector mythicPosition) {
+        Location mobLocation = LocationProjector.project(location, schematicOffset, mythicPosition).clone();
+        mobLocation.getBlock().setType(Material.AIR);
+        return MythicMobs.Spawn(
+                mobLocation,
+                schematicContainer.getMythicMobsSpawns().get(mythicPosition));
+    }
+
+    private void logPostFailure(String message, Exception exception) {
+        Logger.warn(message);
+        exception.printStackTrace();
+    }
+
+    /**
+     * Samples terrain one schematic X/Z column at a time before block placement.
+     * The old implementation performed the entire 3D sampling pass synchronously
+     * before the distributed paste even started.
+     */
+    private final class PedestalSamplingWork implements Schematic.IncrementalWork {
+        private enum Phase {
+            UNDERGROUND,
+            SURFACE,
+            DONE
+        }
+
+        private final Location lowestCorner;
+        private final int width;
+        private final int height;
+        private final int depth;
+        private Phase phase;
+        private int x;
+        private int z;
+
+        private PedestalSamplingWork(Location buildLocation) {
+            this.lowestCorner = buildLocation.clone().add(schematicOffset);
+            this.width = schematicClipboard.getDimensions().x();
+            this.height = schematicClipboard.getDimensions().y();
+            this.depth = schematicClipboard.getDimensions().z();
+            this.phase = FitAnything.this instanceof FitAirBuilding
+                    ? Phase.DONE
+                    : Phase.UNDERGROUND;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return phase != Phase.DONE;
+        }
+
+        @Override
+        public void runNext() {
+            if (phase == Phase.UNDERGROUND) {
+                sampleUndergroundColumn();
+                advanceSampleColumn();
+                if (x >= width) {
+                    x = 0;
+                    z = 0;
+                    phase = Phase.SURFACE;
+                }
+                return;
             }
 
-            if (!VersionChecker.serverVersionOlderThan(21, 0) &&
-                    entity.getType().equals(EntityType.END_CRYSTAL)) {
-                EnderCrystal enderCrystal = (EnderCrystal) entity;
-                enderCrystal.setShowingBottom(false);
+            if (phase == Phase.SURFACE) {
+                sampleSurfaceColumn();
+                advanceSampleColumn();
+                if (x >= width) phase = Phase.DONE;
             }
         }
-        for (Vector elitePosition : schematicContainer.getEliteMobsSpawns().keySet()) {
-            Location eliteLocation = LocationProjector.project(location, schematicOffset, elitePosition).clone();
-            eliteLocation.getBlock().setType(Material.AIR);
-            eliteLocation.add(new Vector(0.5, 0, 0.5));
-            String bossFilename = schematicContainer.getEliteMobsSpawns().get(elitePosition);
-            //If the spawn fails then don't continue
-            if (!EliteMobs.Spawn(eliteLocation, bossFilename)) return;
-            Location lowestCorner = location.clone().add(schematicOffset);
-            Location highestCorner = lowestCorner.clone().add(new Vector(schematicClipboard.getRegion().getWidth() - 1, schematicClipboard.getRegion().getHeight() - 1, schematicClipboard.getRegion().getLength() - 1));
-            if (DefaultConfig.isProtectEliteMobsRegions() &&
-                    Bukkit.getPluginManager().getPlugin("WorldGuard") != null &&
-                    Bukkit.getPluginManager().getPlugin("EliteMobs") != null) {
-                WorldGuard.Protect(lowestCorner, highestCorner, bossFilename, eliteLocation);
-            } else {
-                if (!worldGuardWarn) {
-                    worldGuardWarn = true;
-                    Logger.warn("You are not using WorldGuard, so BetterStructures could not protect a boss arena! Using WorldGuard is recommended to guarantee a fair combat experience.");
+
+        private void sampleUndergroundColumn() {
+            for (int y = 0; y < height; y += scanStep) {
+                Block groundBlock = lowestCorner.clone().add(new Vector(x, y, z)).getBlock();
+                Block aboveBlock = groundBlock.getRelative(BlockFace.UP);
+                if (aboveBlock.getType().isSolid()
+                        && groundBlock.getType().isSolid()
+                        && !SurfaceMaterials.ignorable(groundBlock.getType())) {
+                    undergroundPedestalMaterials.merge(groundBlock.getType(), 1, Integer::sum);
                 }
             }
         }
 
-        // carm start - Support for MythicMobs
-        for (Map.Entry<Vector, String> entry : schematicContainer.getMythicMobsSpawns().entrySet()) {
-            Location mobLocation = LocationProjector.project(location, schematicOffset, entry.getKey()).clone();
-            mobLocation.getBlock().setType(Material.AIR);
-
-            //If the spawn fails then don't continue
-            if (!MythicMobs.Spawn(mobLocation, entry.getValue())) return;
+        private void sampleSurfaceColumn() {
+            boolean scanUp = lowestCorner.clone()
+                    .add(new Vector(x, height, z))
+                    .getBlock()
+                    .getType()
+                    .isSolid();
+            for (int y = 0; y < 20; y++) {
+                Block groundBlock = lowestCorner.clone()
+                        .add(new Vector(x, scanUp ? y : -y, z))
+                        .getBlock();
+                Block aboveBlock = groundBlock.getRelative(BlockFace.UP);
+                if (!aboveBlock.getType().isSolid() && groundBlock.getType().isSolid()) {
+                    surfacePedestalMaterials.merge(groundBlock.getType(), 1, Integer::sum);
+                    break;
+                }
+            }
         }
-        // carm end - Support for MythicMobs
+
+        private void advanceSampleColumn() {
+            z += scanStep;
+            if (z >= depth) {
+                z = 0;
+                x += scanStep;
+            }
+        }
+    }
+
+    /**
+     * Incremental completion work. Each call performs at most one structure
+     * column, one container, one mob, or the final entity-only FAWE paste.
+     */
+    private final class PostPasteWork implements Schematic.IncrementalWork {
+        private enum Phase {
+            WARN,
+            PEDESTAL,
+            TREES,
+            CHESTS,
+            VANILLA_ENTITIES,
+            ELITE_ENTITIES,
+            MYTHIC_ENTITIES,
+            PROPS,
+            DONE
+        }
+
+        private final Location buildLocation;
+        private final Location lowestCorner;
+        private final Location highestCorner;
+        private final int width;
+        private final int depth;
+        private final Iterator<Vector> chestIterator;
+        private final Iterator<Vector> vanillaIterator;
+        private final Iterator<Vector> eliteIterator;
+        private final Iterator<Vector> mythicIterator;
+
+        private Phase phase = Phase.WARN;
+        private int x;
+        private int z;
+
+        private PostPasteWork(Location buildLocation) {
+            this.buildLocation = buildLocation;
+            this.lowestCorner = buildLocation.clone().add(schematicOffset);
+            this.highestCorner = buildLocation.clone()
+                    .add(schematicOffset)
+                    .add(new Vector(0, schematicClipboard.getDimensions().y() + 1, 0));
+            this.width = schematicClipboard.getDimensions().x();
+            this.depth = schematicClipboard.getDimensions().z();
+            this.chestIterator = new ArrayList<>(schematicContainer.getChestLocations()).iterator();
+            this.vanillaIterator = new ArrayList<>(schematicContainer.getVanillaSpawns().keySet()).iterator();
+            this.eliteIterator = new ArrayList<>(schematicContainer.getEliteMobsSpawns().keySet()).iterator();
+            this.mythicIterator = new ArrayList<>(schematicContainer.getMythicMobsSpawns().keySet()).iterator();
+        }
+
+        @Override
+        public boolean hasNext() {
+            return phase != Phase.DONE;
+        }
+
+        @Override
+        public void runNext() {
+            switch (phase) {
+                case WARN:
+                    try {
+                        warnAdmins(buildLocation);
+                    } catch (Exception exception) {
+                        logPostFailure("Failed to send BetterStructures generation warning!", exception);
+                    }
+                    phase = Phase.PEDESTAL;
+                    break;
+                case PEDESTAL:
+                    runPedestalStep();
+                    break;
+                case TREES:
+                    runTreeStep();
+                    break;
+                case CHESTS:
+                    runChestStep();
+                    break;
+                case VANILLA_ENTITIES:
+                    runVanillaEntityStep();
+                    break;
+                case ELITE_ENTITIES:
+                    runEliteEntityStep();
+                    break;
+                case MYTHIC_ENTITIES:
+                    runMythicEntityStep();
+                    break;
+                case PROPS:
+                    try {
+                        spawnProps(schematicClipboard);
+                    } catch (Exception exception) {
+                        logPostFailure("Failed to correctly spawn props!", exception);
+                    }
+                    phase = Phase.DONE;
+                    break;
+                case DONE:
+                    break;
+            }
+        }
+
+        private void runPedestalStep() {
+            if (FitAnything.this instanceof FitAirBuilding
+                    || FitAnything.this instanceof FitLiquidBuilding
+                    || width <= 0
+                    || depth <= 0) {
+                resetColumns();
+                phase = Phase.TREES;
+                return;
+            }
+
+            int columnX = x;
+            int columnZ = z;
+            advanceFullColumn();
+            try {
+                addPedestalColumn(lowestCorner, columnX, columnZ);
+            } catch (Exception exception) {
+                logPostFailure("Failed to correctly assign pedestal material!", exception);
+            }
+
+            if (x >= width) {
+                resetColumns();
+                phase = Phase.TREES;
+            }
+        }
+
+        private void runTreeStep() {
+            if (!(FitAnything.this instanceof FitSurfaceBuilding)
+                    || width <= 0
+                    || depth <= 0) {
+                resetColumns();
+                phase = Phase.CHESTS;
+                return;
+            }
+
+            int columnX = x;
+            int columnZ = z;
+            advanceFullColumn();
+            try {
+                clearTreeColumn(highestCorner, columnX, columnZ);
+            } catch (Exception exception) {
+                logPostFailure("Failed to correctly clear trees!", exception);
+            }
+
+            if (x >= width) {
+                resetColumns();
+                phase = Phase.CHESTS;
+            }
+        }
+
+        private void runChestStep() {
+            if (!chestIterator.hasNext()) {
+                phase = Phase.VANILLA_ENTITIES;
+                return;
+            }
+
+            Vector chestPosition = chestIterator.next();
+            try {
+                fillChest(chestPosition);
+            } catch (Exception exception) {
+                logPostFailure("Failed to correctly fill chest!", exception);
+            }
+        }
+
+        private void runVanillaEntityStep() {
+            if (!vanillaIterator.hasNext()) {
+                phase = Phase.ELITE_ENTITIES;
+                return;
+            }
+
+            Vector entityPosition = vanillaIterator.next();
+            try {
+                spawnVanillaEntity(entityPosition);
+            } catch (Exception exception) {
+                logPostFailure("Failed to correctly spawn vanilla entity!", exception);
+            }
+        }
+
+        private void runEliteEntityStep() {
+            if (!eliteIterator.hasNext()) {
+                phase = Phase.MYTHIC_ENTITIES;
+                return;
+            }
+
+            Vector elitePosition = eliteIterator.next();
+            try {
+                if (!spawnEliteEntity(elitePosition)) {
+                    phase = Phase.PROPS;
+                }
+            } catch (Exception exception) {
+                logPostFailure("Failed to correctly spawn EliteMobs entity!", exception);
+            }
+        }
+
+        private void runMythicEntityStep() {
+            if (!mythicIterator.hasNext()) {
+                phase = Phase.PROPS;
+                return;
+            }
+
+            Vector mythicPosition = mythicIterator.next();
+            try {
+                if (!spawnMythicEntity(mythicPosition)) {
+                    phase = Phase.PROPS;
+                }
+            } catch (Exception exception) {
+                logPostFailure("Failed to correctly spawn MythicMobs entity!", exception);
+            }
+        }
+
+        private void advanceFullColumn() {
+            z++;
+            if (z >= depth) {
+                z = 0;
+                x++;
+            }
+        }
+
+        private void resetColumns() {
+            x = 0;
+            z = 0;
+        }
     }
 }
