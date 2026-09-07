@@ -64,9 +64,17 @@ public class NewChunkLoadEvent implements Listener {
         // generation scan that was postponed by the reload gate.
         if (!event.isNewChunk() && !deferred) return;
 
+        // Most freshly loaded chunks are not structure grid candidates at all.
+        // Reject those before backpressure bookkeeping so fast exploration does
+        // not grow the deferred-coordinate set with irrelevant chunks.
+        if (!hasPotentialStructurePosition(chunk)) {
+            deferredNewChunks.remove(loadingChunkKey);
+            return;
+        }
+
         // Do not run synchronous topology/terrain fitting while the structure
         // pipeline is already overloaded or while server tick time is unhealthy.
-        // Keep the coordinates and replay them gradually instead.
+        // Keep only candidate coordinates and replay them gradually instead.
         if (shouldDeferGenerationScans()) {
             deferredNewChunks.add(loadingChunkKey);
             scheduleDeferredDrain();
@@ -90,6 +98,29 @@ public class NewChunkLoadEvent implements Listener {
         return Schematic.isGenerationPausedForLoad()
                 || Schematic.getQueuedGenerationCount()
                 >= MAX_QUEUED_STRUCTURE_GENERATIONS_BEFORE_DEFERRING;
+    }
+
+    private static boolean hasPotentialStructurePosition(Chunk chunk) {
+        if (!ValidWorldsConfig.isValidWorld(chunk.getWorld())) return false;
+
+        if (!SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.SURFACE).isEmpty()
+                && isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.SURFACE,
+                DefaultConfig.getDistanceSurface(), DefaultConfig.getMaxOffsetSurface())) return true;
+        if (!SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.UNDERGROUND_SHALLOW).isEmpty()
+                && isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.UNDERGROUND_SHALLOW,
+                DefaultConfig.getDistanceShallow(), DefaultConfig.getMaxOffsetShallow())) return true;
+        if (!SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.UNDERGROUND_DEEP).isEmpty()
+                && isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.UNDERGROUND_DEEP,
+                DefaultConfig.getDistanceDeep(), DefaultConfig.getMaxOffsetDeep())) return true;
+        if (!SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.SKY).isEmpty()
+                && isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.SKY,
+                DefaultConfig.getDistanceSky(), DefaultConfig.getMaxOffsetSky())) return true;
+        if (!SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.LIQUID_SURFACE).isEmpty()
+                && isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.LIQUID_SURFACE,
+                DefaultConfig.getDistanceLiquid(), DefaultConfig.getMaxOffsetLiquid())) return true;
+        return !ModuleGeneratorsConfig.getModuleGenerators().isEmpty()
+                && isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.DUNGEON,
+                DefaultConfig.getDistanceDungeon(), DefaultConfig.getMaxOffsetDungeon());
     }
 
     private static void scanNewChunk(Chunk chunk, LoadingChunkKey loadingChunkKey) {
