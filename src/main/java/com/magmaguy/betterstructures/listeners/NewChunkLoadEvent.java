@@ -14,6 +14,7 @@ import com.magmaguy.betterstructures.config.modulegenerators.ModuleGeneratorsCon
 import com.magmaguy.betterstructures.config.modulegenerators.ModuleGeneratorsConfigFields;
 import com.magmaguy.betterstructures.modules.WFCGenerator;
 import com.magmaguy.betterstructures.schematics.SchematicContainer;
+import com.magmaguy.betterstructures.worldedit.Schematic;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.World;
@@ -41,7 +42,11 @@ public class NewChunkLoadEvent implements Listener {
     // that window; retaining Chunk/World objects would pin unloaded worlds.
     private static final Set<LoadingChunkKey> deferredNewChunks = new LinkedHashSet<>();
     private static final ChunkScanReentrancyGuard chunkScanReentrancyGuard = new ChunkScanReentrancyGuard();
-    private static final int MAX_DEFERRED_SCANS_PER_DRAIN = 32;
+
+    // Deferred replay used to allow 32 complete chunk scans in one tick. During
+    // fast exploration that catch-up burst can itself become a lag source.
+    private static final int MAX_DEFERRED_SCANS_PER_DRAIN = 4;
+    private static final int MAX_QUEUED_STRUCTURE_GENERATIONS_BEFORE_DEFERRING = 3;
     private static BukkitTask deferredDrainTask;
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -59,6 +64,15 @@ public class NewChunkLoadEvent implements Listener {
         // generation scan that was postponed by the reload gate.
         if (!event.isNewChunk() && !deferred) return;
 
+        // Do not run synchronous topology/terrain fitting while the structure
+        // pipeline is already overloaded or while server tick time is unhealthy.
+        // Keep the coordinates and replay them gradually instead.
+        if (shouldDeferGenerationScans()) {
+            deferredNewChunks.add(loadingChunkKey);
+            scheduleDeferredDrain();
+            return;
+        }
+
         boolean scanned = chunkScanReentrancyGuard.runIfIdle(
                 () -> scanNewChunk(chunk, loadingChunkKey));
         if (scanned) {
@@ -70,6 +84,12 @@ public class NewChunkLoadEvent implements Listener {
             // the outer scan has released the reentrancy guard.
             scheduleDeferredDrain();
         }
+    }
+
+    private static boolean shouldDeferGenerationScans() {
+        return Schematic.isGenerationPausedForLoad()
+                || Schematic.getQueuedGenerationCount()
+                >= MAX_QUEUED_STRUCTURE_GENERATIONS_BEFORE_DEFERRING;
     }
 
     private static void scanNewChunk(Chunk chunk, LoadingChunkKey loadingChunkKey) {
@@ -124,6 +144,13 @@ public class NewChunkLoadEvent implements Listener {
         if (BetterStructures.isReloading() || deferredNewChunks.isEmpty()
                 || MetadataHandler.PLUGIN == null || !MetadataHandler.PLUGIN.isEnabled()) return;
 
+        // Preserve the queue while the paste/post-processing pipeline protects
+        // server health. Recheck next tick instead of performing catch-up work.
+        if (shouldDeferGenerationScans()) {
+            scheduleDeferredDrain();
+            return;
+        }
+
         Set<LoadingChunkKey> attempted = new HashSet<>();
         int attempts = 0;
         for (LoadingChunkKey loadingChunkKey : new ArrayList<>(deferredNewChunks)) {
@@ -141,6 +168,13 @@ public class NewChunkLoadEvent implements Listener {
                 if (scanned) {
                     deferredNewChunks.remove(loadingChunkKey);
                 } else {
+                    scheduleDeferredDrain();
+                    return;
+                }
+
+                // A replayed scan can enqueue a build. Stop the catch-up batch as
+                // soon as the generation pipeline reaches its backpressure cap.
+                if (shouldDeferGenerationScans()) {
                     scheduleDeferredDrain();
                     return;
                 }
