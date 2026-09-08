@@ -1,6 +1,7 @@
 package com.magmaguy.betterstructures.chests;
 
 import com.magmaguy.betterstructures.config.treasures.TreasureConfigFields;
+import com.magmaguy.betterstructures.thirdparty.RandomSlimefunItemResolver;
 import com.magmaguy.betterstructures.util.ItemStackSerialization;
 import com.magmaguy.betterstructures.util.WeighedProbability;
 import com.magmaguy.magmacore.util.Logger;
@@ -205,6 +206,14 @@ public class ChestContents {
     }
 
     public void rollChestContents(Container chest) {
+        // Albion integration: if Slimefun Legacy is installed, reserve one chest slot
+        // for one random enabled core Slimefun item before normal treasure is rolled.
+        ItemStack randomSlimefunItem = RandomSlimefunItemResolver.resolve(
+                chest.getWorld(), treasureConfigFields.getFilename());
+        if (randomSlimefunItem != null) {
+            placeItemInChest(chest, randomSlimefunItem);
+        }
+
         if (!chestRarities.isEmpty()) {
             rollCustomLoot(chest);
         }
