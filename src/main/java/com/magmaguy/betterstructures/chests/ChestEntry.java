@@ -9,9 +9,13 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class ChestEntry {
+    private static final Set<String> WARNED_INVALID_MATERIALS = ConcurrentHashMap.newKeySet();
+
     private final Material material;
     @Getter
     private final double weight;
@@ -56,12 +60,15 @@ public class ChestEntry {
 
         try {
             if (material != null) {
-                ItemStack rolledItemStack = new ItemStack(material, amount);
+                Material rollMaterial = resolveRollMaterial(material);
+                if (rollMaterial == null) return null;
+
+                ItemStack rolledItemStack = new ItemStack(rollMaterial, amount);
                 if (!procedurallyGeneratedEnchantments)
                     return rolledItemStack;
 
                 List<TreasureConfigFields.ConfigurationEnchantment> configurationEnchantmentList =
-                        treasureConfigFields.getEnchantmentSettings().get(material);
+                        treasureConfigFields.getEnchantmentSettings().get(rollMaterial);
                 if (configurationEnchantmentList == null || configurationEnchantmentList.isEmpty()) return rolledItemStack;
 
                 ItemMeta itemMeta = rolledItemStack.getItemMeta();
@@ -90,6 +97,26 @@ public class ChestEntry {
                     + exception.getClass().getSimpleName() + ": " + String.valueOf(exception.getMessage()));
             return null;
         }
+    }
+
+    private Material resolveRollMaterial(Material configuredMaterial) {
+        // Bukkit exposes BAMBOO_SAPLING as a block-only material on the current API.
+        // Existing BetterStructures configs used it as loot, so preserve those configs by
+        // converting the legacy entry to the actual inventory item instead of throwing.
+        if (configuredMaterial == Material.BAMBOO_SAPLING) {
+            return Material.BAMBOO;
+        }
+
+        if (!configuredMaterial.isItem()) {
+            String warningKey = configuredMaterial.name() + ':' + getSourceFilename();
+            if (WARNED_INVALID_MATERIALS.add(warningKey)) {
+                Logger.warn("Material '" + configuredMaterial.name() + "' in BetterStructures treasure file "
+                        + getSourceFilename() + " is not an inventory item. Entry skipped. This warning is shown once.");
+            }
+            return null;
+        }
+
+        return configuredMaterial;
     }
 
     private String getSourceFilename() {
