@@ -53,6 +53,9 @@ public class WFCGenerator {
     private volatile String pendingProgressMessage;
     private final AtomicBoolean progressUpdateScheduled = new AtomicBoolean();
     private final AtomicBoolean cleanedUp = new AtomicBoolean();
+    private boolean naturalGeneration;
+    private int triggeringChunkX;
+    private int triggeringChunkZ;
 
     public WFCGenerator(ModuleGeneratorsConfigFields moduleGeneratorsConfigFields, Player player) {
         this.player = Objects.requireNonNull(player, "player");
@@ -65,10 +68,40 @@ public class WFCGenerator {
         initialize(moduleGeneratorsConfigFields);
     }
 
+    private WFCGenerator(ModuleGeneratorsConfigFields moduleGeneratorsConfigFields,
+                         Location startLocation,
+                         int triggeringChunkX,
+                         int triggeringChunkZ) {
+        this.startLocation = Objects.requireNonNull(startLocation, "startLocation");
+        this.naturalGeneration = true;
+        this.triggeringChunkX = triggeringChunkX;
+        this.triggeringChunkZ = triggeringChunkZ;
+        initialize(moduleGeneratorsConfigFields);
+    }
+
     public static void generateFromConfig(ModuleGeneratorsConfigFields generatorsConfigFields, Player player) {
         Objects.requireNonNull(generatorsConfigFields, "generatorsConfigFields");
         Objects.requireNonNull(player, "player");
         runOnPrimaryThread(() -> new WFCGenerator(generatorsConfigFields, player));
+    }
+
+    /**
+     * Starts a modular dungeon selected by new-chunk world generation. Unlike
+     * manual /bs generateModules runs, these must not consume already-generated
+     * terrain or cross WorldGuard regions, so the complete footprint is checked
+     * before WFC starts and again immediately before the paste is published.
+     */
+    public static void generateNaturally(ModuleGeneratorsConfigFields generatorsConfigFields,
+                                         Location startLocation,
+                                         int triggeringChunkX,
+                                         int triggeringChunkZ) {
+        Objects.requireNonNull(generatorsConfigFields, "generatorsConfigFields");
+        Objects.requireNonNull(startLocation, "startLocation");
+        runOnPrimaryThread(() -> new WFCGenerator(
+                generatorsConfigFields,
+                startLocation,
+                triggeringChunkX,
+                triggeringChunkZ));
     }
 
     public static void shutdown() {
@@ -149,6 +182,8 @@ public class WFCGenerator {
         // [minY, maxY]) are boundary nodes pre-collapsed to 'nothing' that never enter the entropy
         // queue, so counting them would keep the progress bar from ever reaching 100%.
         totalNodes = (radius * 2 - 1) * (radius * 2 - 1) * (maxY - minY + 1);
+
+        if (!naturalFootprintIsClear()) return;
         ACTIVE_GENERATORS.add(this);
 
         try {
@@ -159,6 +194,17 @@ public class WFCGenerator {
             exception.printStackTrace();
             cleanup();
         }
+    }
+
+    private boolean naturalFootprintIsClear() {
+        if (!naturalGeneration || moduleGeneratorsConfigFields.isWorldGeneration()) return true;
+        World startWorld = startLocation.getWorld();
+        return startWorld != null && DungeonFootprintGuard.isClear(
+                startWorld,
+                startLocation,
+                moduleGeneratorsConfigFields,
+                triggeringChunkX,
+                triggeringChunkZ);
     }
 
     private void initializeWorldAndLattice() {
@@ -284,6 +330,16 @@ public class WFCGenerator {
             cleanup();
             return;
         }
+
+        // WFC runs asynchronously and can take long enough for a player or a
+        // different generator to touch a neighboring chunk after the initial
+        // preflight. Re-check the exact same footprint at the publication edge.
+        if (!naturalFootprintIsClear()) {
+            isCancelled = true;
+            cleanup();
+            return;
+        }
+
         updateProgressBar("Generation complete!");
         if (player != null) {
             player.sendMessage("Done assembling!");
