@@ -36,9 +36,11 @@ import java.util.concurrent.ThreadLocalRandom;
 public class NewChunkLoadEvent implements Listener {
 
     private static final Set<LoadingChunkKey> loadingChunks = new HashSet<>();
-    // A content reload temporarily owns and rebuilds every registry read by a
-    // chunk scan. Keep only stable coordinates for new chunks observed during
-    // that window; retaining Chunk/World objects would pin unloaded worlds.
+    // New chunks are always queued by stable coordinates and scanned on a later
+    // server tick. This keeps terrain fitting and modular preflight work out of
+    // ChunkLoadEvent itself. The same queue intentionally survives an in-place
+    // content reload, so chunks observed while registries are rebuilding are not
+    // lost and are replayed after the reload finishes.
     private static final Set<LoadingChunkKey> deferredNewChunks = new LinkedHashSet<>();
     private static final ChunkScanReentrancyGuard chunkScanReentrancyGuard = new ChunkScanReentrancyGuard();
     private static final int MAX_DEFERRED_SCANS_PER_DRAIN = 32;
@@ -46,30 +48,17 @@ public class NewChunkLoadEvent implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onChunkLoad(ChunkLoadEvent event) {
-        Chunk chunk = event.getChunk();
-        LoadingChunkKey loadingChunkKey = LoadingChunkKey.from(chunk);
-        boolean deferred = deferredNewChunks.contains(loadingChunkKey);
+        LoadingChunkKey loadingChunkKey = LoadingChunkKey.from(event.getChunk());
+        boolean alreadyPending = deferredNewChunks.contains(loadingChunkKey);
 
-        if (BetterStructures.isReloading()) {
-            if (event.isNewChunk()) deferredNewChunks.add(loadingChunkKey);
-            return;
-        }
-        // A deferred chunk may have unloaded while content was rebuilding. Its
+        // A pending chunk may have unloaded while a reload was running. Its
         // later load is no longer reported as "new", but it still needs the one
-        // generation scan that was postponed by the reload gate.
-        if (!event.isNewChunk() && !deferred) return;
+        // scan that was deferred earlier.
+        if (!event.isNewChunk() && !alreadyPending) return;
 
-        boolean scanned = chunkScanReentrancyGuard.runIfIdle(
-                () -> scanNewChunk(chunk, loadingChunkKey));
-        if (scanned) {
-            deferredNewChunks.remove(loadingChunkKey);
-        } else if (deferred) {
-            // This load happened synchronously inside another guarded scan. The
-            // chunk is loaded now, so waiting for another ChunkLoadEvent could
-            // strand its reload-deferred scan forever. Drain it next tick, once
-            // the outer scan has released the reentrancy guard.
-            scheduleDeferredDrain();
-        }
+        deferredNewChunks.add(loadingChunkKey);
+        if (BetterStructures.isReloading()) return;
+        scheduleDeferredDrain();
     }
 
     private static void scanNewChunk(Chunk chunk, LoadingChunkKey loadingChunkKey) {
@@ -155,7 +144,7 @@ public class NewChunkLoadEvent implements Listener {
         }
 
         // A scan can synchronously load a key that was unloaded when this
-        // snapshot reached it, and a large reload can exceed the per-tick cap.
+        // snapshot reached it, and a large burst can exceed the per-tick cap.
         // Continue only when an unattempted queued key is already loaded; keys
         // that remain unloaded wait for their next normal load event.
         for (LoadingChunkKey loadingChunkKey : deferredNewChunks) {
@@ -308,6 +297,10 @@ public class NewChunkLoadEvent implements Listener {
         }
         if (validatedGenerators.isEmpty()) return;
         ModuleGeneratorsConfigFields moduleGeneratorsConfigFields = validatedGenerators.get(ThreadLocalRandom.current().nextInt(0, validatedGenerators.size()));
-        new WFCGenerator(moduleGeneratorsConfigFields, chunk.getBlock(8,moduleGeneratorsConfigFields.getCenterModuleAltitude(),8).getLocation());
+        WFCGenerator.generateNaturally(
+                moduleGeneratorsConfigFields,
+                chunk.getBlock(8, moduleGeneratorsConfigFields.getCenterModuleAltitude(), 8).getLocation(),
+                chunk.getX(),
+                chunk.getZ());
     }
 }

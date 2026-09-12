@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Pin the MagmaCore revision that contains the BetterStructures 2.7.0
+  # Pin the MagmaCore revision that contains the BetterStructures 2.7.1
   # Nightbreak/content lifecycle APIs, while publishing only its core module.
   MAGMACORE_REF: 27ce503321359f158fb4874752378ea2e4d629df
   MOCKBUKKIT_REF: 55ceb39635aa2347ca55e4246b1df60ef0f6520b
@@ -85,13 +85,13 @@ jobs:
       - name: Prepare raw Albion JAR
         run: |
           test -f build/libs/BetterStructures.jar
-          cp build/libs/BetterStructures.jar build/libs/BetterStructures-2.7.0-Albion.jar
-          ls -lh build/libs/BetterStructures.jar build/libs/BetterStructures-2.7.0-Albion.jar
+          cp build/libs/BetterStructures.jar build/libs/BetterStructures-2.7.1-Albion.jar
+          ls -lh build/libs/BetterStructures.jar build/libs/BetterStructures-2.7.1-Albion.jar
 
       - name: Upload raw JAR artifact
         uses: actions/upload-artifact@v7
         with:
-          path: build/libs/BetterStructures-2.7.0-Albion.jar
+          path: build/libs/BetterStructures-2.7.1-Albion.jar
           archive: false
           if-no-files-found: error
 
@@ -101,9 +101,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          TAG="betterstructures-2.7.0-albion-build-${GITHUB_RUN_NUMBER}"
-          TITLE="BetterStructures 2.7.0 Albion build ${GITHUB_RUN_NUMBER}"
-          JAR="build/libs/BetterStructures-2.7.0-Albion.jar"
+          TAG="betterstructures-2.7.1-albion-build-${GITHUB_RUN_NUMBER}"
+          TITLE="BetterStructures 2.7.1 Albion build ${GITHUB_RUN_NUMBER}"
+          JAR="build/libs/BetterStructures-2.7.1-Albion.jar"
 
           RELEASE_FLAGS=(--target "$GITHUB_SHA" --title "$TITLE" --generate-notes)
           if [[ "$GITHUB_REF" == "refs/heads/master" ]]; then
@@ -118,8 +118,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
         shell: bash
         run: |
-          TAG="betterstructures-2.7.0-albion-build-${GITHUB_RUN_NUMBER}"
-          JAR_NAME="BetterStructures-2.7.0-Albion.jar"
+          TAG="betterstructures-2.7.1-albion-build-${GITHUB_RUN_NUMBER}"
+          JAR_NAME="BetterStructures-2.7.1-Albion.jar"
           DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${JAR_NAME}"
           RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
 

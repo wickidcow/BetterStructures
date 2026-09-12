@@ -20,6 +20,7 @@ import com.sk89q.worldguard.protection.regions.RegionContainer;
 import com.sk89q.worldguard.protection.regions.RegionQuery;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -89,6 +90,32 @@ public class WorldGuard implements Listener {
         region.setFlag(BETTERSTRUCTURES_PROTECTED, allow);
         region.setFlag(Flags.PASSTHROUGH, allow);
         regionManager.addRegion(region);
+    }
+
+    /**
+     * Returns true when any WorldGuard region intersects the supplied cuboid.
+     * This is used by natural modular-dungeon generation so a dungeon cannot
+     * begin outside a protected area and then extend into it several modules
+     * later. The probe is never registered with WorldGuard.
+     */
+    public static boolean overlapsAnyRegion(World world,
+                                            int minX, int minY, int minZ,
+                                            int maxX, int maxY, int maxZ) {
+        if (world == null || !Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) return false;
+        try {
+            RegionContainer regionContainer = com.sk89q.worldguard.WorldGuard.getInstance().getPlatform().getRegionContainer();
+            RegionManager regionManager = regionContainer.get(BukkitAdapter.adapt(world));
+            if (regionManager == null) return false;
+            ProtectedRegion footprint = new ProtectedCuboidRegion(
+                    "__betterstructures_dungeon_footprint_probe__",
+                    BlockVector3.at(minX, minY, minZ),
+                    BlockVector3.at(maxX, maxY, maxZ));
+            return regionManager.getApplicableRegions(footprint).size() > 0;
+        } catch (Throwable throwable) {
+            Logger.warn("Could not check WorldGuard regions for a BetterStructures dungeon footprint: "
+                    + throwable.getMessage());
+            return false;
+        }
     }
 
     public static void Unprotect(CustomBossEntity customBossEntity) {

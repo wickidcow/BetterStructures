@@ -4,7 +4,6 @@ import com.magmaguy.betterstructures.MetadataHandler;
 import com.magmaguy.magmacore.config.ConfigurationEngine;
 import com.magmaguy.magmacore.config.ConfigurationFile;
 import com.magmaguy.magmacore.util.WorldFolderResolver;
-import lombok.Getter;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
@@ -17,9 +16,11 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Locale;
 
 public class ValidWorldsConfig extends ConfigurationFile {
     private static final String VALID_WORLDS_KEY = "Valid worlds";
+    private static final String ELITEMOBS_EXCLUSION_MIGRATION_KEY = "EliteMobs worlds excluded by default";
     private static final long UNLOAD_PRUNE_DELAY_TICKS = 20L * 10L;
     private static final HashMap<String, Boolean> validWorlds = new HashMap<>();
     private static boolean whitelistNewWorlds;
@@ -32,7 +33,7 @@ public class ValidWorldsConfig extends ConfigurationFile {
 
     public static void registerNewWorld(World world) {
         if (world == null || instance == null) return;
-        registerWorldName(world.getName(), whitelistNewWorlds, true);
+        registerWorldName(world.getName(), defaultValidityForNewWorld(world.getName()), true);
     }
 
     private static void registerWorldName(String worldName, boolean defaultValue, boolean save) {
@@ -43,6 +44,9 @@ public class ValidWorldsConfig extends ConfigurationFile {
                 ConfigurationEngine.fileSaverCustomValues(instance.fileConfiguration, instance.file);
         }
 
+        // Never overwrite an existing choice here. In particular, an EliteMobs
+        // world deliberately re-enabled after the one-time migration must stay
+        // enabled across reloads and restarts.
         validWorlds.put(worldName, instance.fileConfiguration.getBoolean(validWorldsPath(worldName)));
     }
 
@@ -97,6 +101,39 @@ public class ValidWorldsConfig extends ConfigurationFile {
         }
     }
 
+    private static boolean eliteMobsIsEnabled() {
+        return Bukkit.getPluginManager().isPluginEnabled("EliteMobs");
+    }
+
+    static boolean isEliteMobsManagedWorldName(String worldName) {
+        return worldName != null && worldName.toLowerCase(Locale.ROOT).startsWith("em_");
+    }
+
+    private static boolean defaultValidityForNewWorld(String worldName) {
+        if (eliteMobsIsEnabled() && isEliteMobsManagedWorldName(worldName)) return false;
+        return whitelistNewWorlds;
+    }
+
+    /**
+     * 2.7.1 migration: older builds registered every newly observed world with
+     * the global default, including EliteMobs' adventurers-guild and instanced
+     * dungeon worlds. Flip legacy em_* entries once, then persist a marker so a
+     * server owner can deliberately re-enable one later without us undoing it.
+     */
+    private void migrateEliteMobsWorldDefaultsOnce() {
+        if (!eliteMobsIsEnabled()) return;
+        if (fileConfiguration.getBoolean(ELITEMOBS_EXCLUSION_MIGRATION_KEY, false)) return;
+
+        ConfigurationSection validWorldsSection = getOrCreateValidWorldsSection();
+        for (String worldName : new ArrayList<>(validWorldsSection.getKeys(false))) {
+            if (isEliteMobsManagedWorldName(worldName)) {
+                fileConfiguration.set(validWorldsPath(worldName), false);
+                validWorlds.put(worldName, false);
+            }
+        }
+        fileConfiguration.set(ELITEMOBS_EXCLUSION_MIGRATION_KEY, true);
+    }
+
     public static boolean isValidWorld(World world) {
         if (world == null) return false;
         if (validWorlds.get(world.getName()) != null)
@@ -115,9 +152,10 @@ public class ValidWorldsConfig extends ConfigurationFile {
         fileConfiguration.addDefault(VALID_WORLDS_KEY, new HashMap<String, Boolean>());
 
         pruneMissingWorldEntries();
+        migrateEliteMobsWorldDefaultsOnce();
 
         for (World world : Bukkit.getWorlds())
-            registerWorldName(world.getName(), whitelistNewWorlds, false);
+            registerWorldName(world.getName(), defaultValidityForNewWorld(world.getName()), false);
 
         ConfigurationSection validWorldsSection = fileConfiguration.getConfigurationSection(VALID_WORLDS_KEY);
         if (validWorldsSection == null) return;
