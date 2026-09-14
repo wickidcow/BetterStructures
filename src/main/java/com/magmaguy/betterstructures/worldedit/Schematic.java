@@ -150,9 +150,11 @@ public class Schematic {
     public static void paste(Clipboard clipboard, Location location) {
         World world = BukkitAdapter.adapt(location.getWorld());
         try (EditSession editSession = WorldEdit.getInstance().newEditSession(world)) {
+            editSession.setTrackingHistory(false);
+            editSession.setSideEffectApplier(SideEffectSet.none());
             Operation operation = new ClipboardHolder(clipboard)
                     .createPaste(editSession)
-                    .to(BlockVector3.at(location.getX(), location.getY(), location.getZ()))
+                    .to(BlockVector3.at(location.getBlockX(), location.getBlockY(), location.getBlockZ()))
                     .build();
             Operations.complete(operation);
         } catch (WorldEditException e) {
@@ -372,10 +374,15 @@ public class Schematic {
 
     private static void pasteBlock(PasteBlock pasteBlock) {
         if (pasteBlock.blockData() != null) {
-            pasteBlock.block().setBlockData(pasteBlock.blockData());
+            // Natural structure placement should not trigger thousands of individual physics
+            // updates while a schematic is being assembled. Redstone/liquid reconciliation can
+            // happen after placement instead of being paid per block on the hot server thread.
+            pasteBlock.block().setBlockData(pasteBlock.blockData(), false);
         } else if (pasteBlock.clipboard() != null) {
             try (EditSession editSession = WorldEdit.getInstance().newEditSession(
                     BukkitAdapter.adapt(pasteBlock.block().getLocation().getWorld()))) {
+                editSession.setTrackingHistory(false);
+                editSession.setSideEffectApplier(SideEffectSet.none());
                 Operation worldeditPaste = new ClipboardHolder(pasteBlock.clipboard())
                         .createPaste(editSession)
                         .to(BlockVector3.at(
@@ -383,7 +390,7 @@ public class Schematic {
                                 pasteBlock.block().getY(),
                                 pasteBlock.block().getZ()))
                         .build();
-                Operations.complete(worldeditPaste);
+                Operations.complete(operation);
             } catch (WorldEditException e) {
                 throw new RuntimeException(e);
             }
