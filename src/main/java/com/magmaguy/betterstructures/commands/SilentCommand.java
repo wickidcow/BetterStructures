@@ -10,6 +10,7 @@ import java.util.List;
 public class SilentCommand extends AdvancedCommand {
     public SilentCommand() {
         super(List.of("silent"));
+        setPermission("betterstructures.*");
         setUsage("/betterstructures silent");
         setDescription("Silences the warnings about structures appearing for admins.");
     }
@@ -17,6 +18,7 @@ public class SilentCommand extends AdvancedCommand {
     @Override
     public void execute(CommandData commandData) {
         DefaultConfig.toggleWarnings();
-        Logger.sendMessage(commandData.getCommandSender(), "&2Toggled build warnings to " + DefaultConfig.isNewBuildingWarn() + "!");
+        Logger.sendMessage(commandData.getCommandSender(),
+                "&2Toggled build warnings to " + DefaultConfig.isNewBuildingWarn() + "!");
     }
 }
