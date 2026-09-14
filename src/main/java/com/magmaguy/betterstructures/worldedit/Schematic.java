@@ -17,6 +17,7 @@ import com.sk89q.worldedit.function.operation.Operation;
 import com.sk89q.worldedit.function.operation.Operations;
 import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.session.ClipboardHolder;
+import com.sk89q.worldedit.util.SideEffectSet;
 import com.sk89q.worldedit.world.World;
 import com.sk89q.worldedit.world.block.BaseBlock;
 import com.sk89q.worldedit.world.block.BlockState;
@@ -31,8 +32,10 @@ import org.bukkit.util.Vector;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.Queue;
@@ -95,6 +98,11 @@ public class Schematic {
     }
 
     private Schematic() {
+    }
+
+    @FunctionalInterface
+    public interface FawePostProcessor {
+        void run(EditSession editSession, Location adjustedLocation) throws Exception;
     }
 
     public static Clipboard load(File schematicFile) {
@@ -213,10 +221,36 @@ public class Schematic {
             Vector schematicOffset,
             Function<Boolean, Material> pedestalMaterialProvider,
             Runnable onComplete) {
+        pasteSchematic(
+                schematicClipboard,
+                location,
+                schematicOffset,
+                null,
+                pedestalMaterialProvider,
+                null,
+                onComplete);
+    }
+
+    /**
+     * Natural-structure paste with Albion's chunk-preparation and FAWE post-processing hooks.
+     * Every horizontal chunk in the structure footprint is asynchronously prepared and ticketed
+     * before terrain sampling begins, so the pre-paste callback cannot synchronously generate a
+     * neighboring chunk while inspecting pedestal material.
+     */
+    public static void pasteSchematic(
+            Clipboard schematicClipboard,
+            Location location,
+            Vector schematicOffset,
+            Runnable prePasteCallback,
+            Function<Boolean, Material> pedestalMaterialProvider,
+            FawePostProcessor fawePostProcessor,
+            Runnable onComplete) {
         enqueue(new ClipboardPasteOperation(
                 schematicClipboard,
                 location.clone().add(schematicOffset),
+                prePasteCallback,
                 pedestalMaterialProvider,
+                fawePostProcessor,
                 onComplete));
     }
 
@@ -301,7 +335,6 @@ public class Schematic {
         }
     }
 
-    /** Converts the configured tick share to a bounded per-tick work budget. */
     static long maxNanosPerTick(double percentage) {
         return PasteBudget.nanosPerTick(percentage);
     }
@@ -417,43 +450,76 @@ public class Schematic {
     }
 
     private static final class ClipboardPasteOperation implements PasteOperation {
+        private static final int PHASE_PREPARE_CHUNKS = 0;
+        private static final int PHASE_PRE_PASTE = 1;
+        private static final int PHASE_BLOCKS = 2;
+        private static final int PHASE_FAWE_POST = 3;
+        private static final int PHASE_DONE = 4;
+
         private final Clipboard clipboard;
         private final Location adjustedLocation;
+        private final Runnable prePasteCallback;
         private final Function<Boolean, Material> pedestalMaterialProvider;
+        private final FawePostProcessor fawePostProcessor;
         private final PasteCursor cursor;
         private final Runnable onComplete;
-        private PasteChunkReadiness chunks;
+        private final PasteChunkReadiness chunks;
+        private final List<Location> chunkAnchors;
+
+        private int phase = PHASE_PREPARE_CHUNKS;
+        private int chunkIndex;
         private PasteCoordinate nextCoordinate;
+        private volatile boolean postProcessingDone;
+        private volatile Throwable postProcessingFailure;
+        private boolean postProcessingStarted;
+        private BukkitTask postProcessingTask;
+        private boolean closed;
 
         private ClipboardPasteOperation(
                 Clipboard clipboard,
                 Location adjustedLocation,
+                Runnable prePasteCallback,
                 Function<Boolean, Material> pedestalMaterialProvider,
+                FawePostProcessor fawePostProcessor,
                 Runnable onComplete) {
             this.clipboard = clipboard;
             this.adjustedLocation = adjustedLocation;
+            this.prePasteCallback = prePasteCallback;
             this.pedestalMaterialProvider = pedestalMaterialProvider;
+            this.fawePostProcessor = fawePostProcessor;
             this.cursor = new PasteCursor(
                     clipboard.getDimensions().x(),
                     clipboard.getDimensions().y(),
                     clipboard.getDimensions().z());
             this.onComplete = onComplete;
+            org.bukkit.World world = adjustedLocation.getWorld();
+            if (world == null) throw new IllegalStateException("Paste world is unavailable");
+            this.chunks = new PasteChunkReadiness(world);
+            this.chunkAnchors = buildChunkAnchors(adjustedLocation, clipboard);
         }
 
         @Override
         public boolean hasNext() {
-            return nextCoordinate != null || cursor.hasNext();
+            return !closed && phase < PHASE_DONE;
         }
 
         @Override
         public boolean ready() {
+            return switch (phase) {
+                case PHASE_PREPARE_CHUNKS ->
+                        chunkIndex >= chunkAnchors.size() || chunks.ready(chunkAnchors.get(chunkIndex));
+                case PHASE_PRE_PASTE -> true;
+                case PHASE_BLOCKS -> blockReady();
+                case PHASE_FAWE_POST -> !postProcessingStarted || postProcessingDone;
+                default -> false;
+            };
+        }
+
+        private boolean blockReady() {
             if (nextCoordinate == null) {
                 if (!cursor.hasNext()) return true;
                 nextCoordinate = cursor.next();
             }
-            org.bukkit.World world = adjustedLocation.getWorld();
-            if (world == null) throw new IllegalStateException("Paste world is unavailable");
-            if (chunks == null) chunks = new PasteChunkReadiness(world);
             Location target = adjustedLocation.clone().add(
                     nextCoordinate.x(), nextCoordinate.y(), nextCoordinate.z());
             return chunks.ready(target);
@@ -461,9 +527,65 @@ public class Schematic {
 
         @Override
         public void pasteNext() {
-            if (nextCoordinate == null) nextCoordinate = cursor.next();
-            pasteClipboardBlock(clipboard, adjustedLocation, pedestalMaterialProvider, nextCoordinate);
-            nextCoordinate = null;
+            switch (phase) {
+                case PHASE_PREPARE_CHUNKS -> {
+                    if (chunkIndex < chunkAnchors.size()) {
+                        chunkIndex++;
+                    } else {
+                        phase = PHASE_PRE_PASTE;
+                    }
+                }
+                case PHASE_PRE_PASTE -> {
+                    if (prePasteCallback != null) prePasteCallback.run();
+                    phase = PHASE_BLOCKS;
+                }
+                case PHASE_BLOCKS -> {
+                    if (nextCoordinate == null) {
+                        if (!cursor.hasNext()) {
+                            phase = PHASE_FAWE_POST;
+                            return;
+                        }
+                        nextCoordinate = cursor.next();
+                    }
+                    pasteClipboardBlock(clipboard, adjustedLocation, pedestalMaterialProvider, nextCoordinate);
+                    nextCoordinate = null;
+                }
+                case PHASE_FAWE_POST -> advanceFawePostProcessing();
+                default -> throw new IllegalStateException("Invalid natural paste phase " + phase);
+            }
+        }
+
+        private void advanceFawePostProcessing() {
+            if (fawePostProcessor == null) {
+                phase = PHASE_DONE;
+                return;
+            }
+            if (!postProcessingStarted) {
+                postProcessingStarted = true;
+                try {
+                    postProcessingTask = Bukkit.getScheduler().runTaskAsynchronously(MetadataHandler.PLUGIN, () -> {
+                        try (EditSession editSession = WorldEdit.getInstance().newEditSession(
+                                BukkitAdapter.adapt(adjustedLocation.getWorld()))) {
+                            editSession.setTrackingHistory(false);
+                            editSession.setSideEffectApplier(SideEffectSet.none());
+                            if (!closed) fawePostProcessor.run(editSession, adjustedLocation);
+                        } catch (Throwable failure) {
+                            postProcessingFailure = failure;
+                        } finally {
+                            postProcessingDone = true;
+                        }
+                    });
+                } catch (Throwable failure) {
+                    postProcessingFailure = failure;
+                    postProcessingDone = true;
+                }
+                return;
+            }
+            if (!postProcessingDone) return;
+            if (postProcessingFailure != null) {
+                throw new IllegalStateException("FAWE natural-structure post-processing failed", postProcessingFailure);
+            }
+            phase = PHASE_DONE;
         }
 
         @Override
@@ -473,9 +595,29 @@ public class Schematic {
 
         @Override
         public void close() {
-            if (chunks != null) chunks.close();
-            chunks = null;
+            if (closed) return;
+            closed = true;
+            if (postProcessingTask != null && !postProcessingDone) postProcessingTask.cancel();
+            chunks.close();
             nextCoordinate = null;
+        }
+
+        private static List<Location> buildChunkAnchors(Location adjustedLocation, Clipboard clipboard) {
+            List<Location> anchors = new ArrayList<>();
+            int minX = adjustedLocation.getBlockX();
+            int minZ = adjustedLocation.getBlockZ();
+            int maxX = minX + Math.max(0, clipboard.getDimensions().x() - 1);
+            int maxZ = minZ + Math.max(0, clipboard.getDimensions().z() - 1);
+            for (int chunkX = minX >> 4; chunkX <= maxX >> 4; chunkX++) {
+                for (int chunkZ = minZ >> 4; chunkZ <= maxZ >> 4; chunkZ++) {
+                    anchors.add(new Location(
+                            adjustedLocation.getWorld(),
+                            chunkX * 16 + 8,
+                            adjustedLocation.getY(),
+                            chunkZ * 16 + 8));
+                }
+            }
+            return anchors;
         }
     }
 
