@@ -16,9 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Pin the MagmaCore revision that contains the BetterStructures 2.7.x
-  # Nightbreak/content lifecycle APIs, while publishing only its core module.
-  MAGMACORE_REF: 27ce503321359f158fb4874752378ea2e4d629df
+  # Pin the MagmaCore revision used with the upstream 2.7.2-era fixes, including
+  # imported-model reload acceptance and DLC world replacement while players are online.
+  MAGMACORE_REF: af7d0c32255804905f911b37cc7d3c877b120956
   MOCKBUKKIT_REF: 55ceb39635aa2347ca55e4246b1df60ef0f6520b
 
 jobs:
