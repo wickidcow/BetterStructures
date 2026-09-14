@@ -375,8 +375,7 @@ public class Schematic {
     private static void pasteBlock(PasteBlock pasteBlock) {
         if (pasteBlock.blockData() != null) {
             // Natural structure placement should not trigger thousands of individual physics
-            // updates while a schematic is being assembled. Redstone/liquid reconciliation can
-            // happen after placement instead of being paid per block on the hot server thread.
+            // updates while a schematic is being assembled.
             pasteBlock.block().setBlockData(pasteBlock.blockData(), false);
         } else if (pasteBlock.clipboard() != null) {
             try (EditSession editSession = WorldEdit.getInstance().newEditSession(
@@ -390,7 +389,7 @@ public class Schematic {
                                 pasteBlock.block().getY(),
                                 pasteBlock.block().getZ()))
                         .build();
-                Operations.complete(operation);
+                Operations.complete(worldeditPaste);
             } catch (WorldEditException e) {
                 throw new RuntimeException(e);
             }
