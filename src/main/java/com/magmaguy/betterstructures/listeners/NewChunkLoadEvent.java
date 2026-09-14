@@ -13,7 +13,9 @@ import com.magmaguy.betterstructures.config.generators.GeneratorConfigFields;
 import com.magmaguy.betterstructures.config.modulegenerators.ModuleGeneratorsConfig;
 import com.magmaguy.betterstructures.config.modulegenerators.ModuleGeneratorsConfigFields;
 import com.magmaguy.betterstructures.modules.WFCGenerator;
+import com.magmaguy.betterstructures.performance.GenerationScheduler;
 import com.magmaguy.betterstructures.schematics.SchematicContainer;
+import com.magmaguy.betterstructures.worldedit.PasteChunkReadiness;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.World;
@@ -36,24 +38,26 @@ import java.util.concurrent.ThreadLocalRandom;
 public class NewChunkLoadEvent implements Listener {
 
     private static final Set<LoadingChunkKey> loadingChunks = new HashSet<>();
-    // New chunks are always queued by stable coordinates and scanned on a later
-    // server tick. This keeps terrain fitting and modular preflight work out of
-    // ChunkLoadEvent itself. The same queue intentionally survives an in-place
-    // content reload, so chunks observed while registries are rebuilding are not
-    // lost and are replayed after the reload finishes.
     private static final Set<LoadingChunkKey> deferredNewChunks = new LinkedHashSet<>();
     private static final ChunkScanReentrancyGuard chunkScanReentrancyGuard = new ChunkScanReentrancyGuard();
-    private static final int MAX_DEFERRED_SCANS_PER_DRAIN = 32;
+    // The deterministic position checks are cheap, but a large exploration burst should still be
+    // spread out. Qualifying expensive fit jobs are separately serialized by GenerationScheduler.
+    private static final int MAX_DEFERRED_SCANS_PER_DRAIN = 8;
     private static BukkitTask deferredDrainTask;
+
+    public NewChunkLoadEvent() {
+        GenerationScheduler.start();
+    }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onChunkLoad(ChunkLoadEvent event) {
+        // Chunks loaded only because an already-selected structure needs them must never recursively
+        // become candidates for another BetterStructures structure.
+        if (PasteChunkReadiness.isInternalChunkLoad(event.getChunk())) return;
+
         LoadingChunkKey loadingChunkKey = LoadingChunkKey.from(event.getChunk());
         boolean alreadyPending = deferredNewChunks.contains(loadingChunkKey);
 
-        // A pending chunk may have unloaded while a reload was running. Its
-        // later load is no longer reported as "new", but it still needs the one
-        // scan that was deferred earlier.
         if (!event.isNewChunk() && !alreadyPending) return;
 
         deferredNewChunks.add(loadingChunkKey);
@@ -64,7 +68,6 @@ public class NewChunkLoadEvent implements Listener {
     private static void scanNewChunk(Chunk chunk, LoadingChunkKey loadingChunkKey) {
         if (!ValidWorldsConfig.isValidWorld(chunk.getWorld())) return;
         if (loadingChunks.contains(loadingChunkKey)) return;
-        //In some cases the same chunk gets loaded (at least at an event level) several times, this prevents the plugin from doing multiple scans and placing multiple builds, enhancing performance
         loadingChunks.add(loadingChunkKey);
         new BukkitRunnable() {
             @Override
@@ -73,25 +76,24 @@ public class NewChunkLoadEvent implements Listener {
             }
         }.runTaskLater(MetadataHandler.PLUGIN, 20L);
 
-        surfaceScanner(chunk);
-        shallowUndergroundScanner(chunk);
-        deepUndergroundScanner(chunk);
-        skyScanner(chunk);
-        liquidSurfaceScanner(chunk);
-        dungeonScanner(chunk);
+        List<Runnable> jobs = new ArrayList<>(6);
+        surfaceScanner(chunk, jobs);
+        shallowUndergroundScanner(chunk, jobs);
+        deepUndergroundScanner(chunk, jobs);
+        skyScanner(chunk, jobs);
+        liquidSurfaceScanner(chunk, jobs);
+        dungeonScanner(chunk, jobs);
+        GenerationScheduler.enqueue(chunk, jobs);
     }
 
     public static void prepareForContentReload() {
         cancelDeferredDrain();
         loadingChunks.clear();
+        GenerationScheduler.shutdown();
     }
 
-    /**
-     * Schedules a bounded replay of deferred chunks that are still loaded
-     * without force-loading worlds or chunks. Unloaded coordinates stay queued
-     * and are consumed by their next ordinary ChunkLoadEvent.
-     */
     public static void replayDeferredNewChunks() {
+        GenerationScheduler.start();
         scheduleDeferredDrain();
     }
 
@@ -118,8 +120,7 @@ public class NewChunkLoadEvent implements Listener {
         for (LoadingChunkKey loadingChunkKey : new ArrayList<>(deferredNewChunks)) {
             if (attempts >= MAX_DEFERRED_SCANS_PER_DRAIN) break;
             World world = Bukkit.getWorld(loadingChunkKey.worldId());
-            if (world == null || !world.isChunkLoaded(
-                    loadingChunkKey.x(), loadingChunkKey.z())) continue;
+            if (world == null || !world.isChunkLoaded(loadingChunkKey.x(), loadingChunkKey.z())) continue;
 
             attempted.add(loadingChunkKey);
             attempts++;
@@ -143,15 +144,10 @@ public class NewChunkLoadEvent implements Listener {
             }
         }
 
-        // A scan can synchronously load a key that was unloaded when this
-        // snapshot reached it, and a large burst can exceed the per-tick cap.
-        // Continue only when an unattempted queued key is already loaded; keys
-        // that remain unloaded wait for their next normal load event.
         for (LoadingChunkKey loadingChunkKey : deferredNewChunks) {
             if (attempted.contains(loadingChunkKey)) continue;
             World world = Bukkit.getWorld(loadingChunkKey.worldId());
-            if (world != null && world.isChunkLoaded(
-                    loadingChunkKey.x(), loadingChunkKey.z())) {
+            if (world != null && world.isChunkLoaded(loadingChunkKey.x(), loadingChunkKey.z())) {
                 scheduleDeferredDrain();
                 return;
             }
@@ -173,6 +169,7 @@ public class NewChunkLoadEvent implements Listener {
         cancelDeferredDrain();
         loadingChunks.clear();
         deferredNewChunks.clear();
+        GenerationScheduler.shutdown();
     }
 
     private record LoadingChunkKey(UUID worldId, int x, int z) {
@@ -181,37 +178,27 @@ public class NewChunkLoadEvent implements Listener {
         }
     }
 
-    /**
-     * Determines if the given chunk is a valid structure position based on
-     * a diamond grid pattern with seeded random offsets.
-     *
-     * @param chunk The chunk to check
-     * @param structureType The type of structure
-     * @param gridDistance The distance between grid points
-     * @param maxOffset The maximum random offset from grid points
-     * @return True if this chunk should have a structure
-     */
-    private static boolean isValidStructurePosition(Chunk chunk, GeneratorConfigFields.StructureType structureType,
-                                                    int gridDistance, int maxOffset) {
+    private static boolean isValidStructurePosition(
+            Chunk chunk,
+            GeneratorConfigFields.StructureType structureType,
+            int gridDistance,
+            int maxOffset) {
         int x = chunk.getX();
         int z = chunk.getZ();
 
-        // Check spawn protection radius (2D distance from 0,0 in blocks)
         int spawnProtectionRadius = DefaultConfig.getSpawnProtectionRadius();
         if (spawnProtectionRadius > 0) {
             int blockX = x * 16 + 8;
             int blockZ = z * 16 + 8;
-            if ((long) blockX * blockX + (long) blockZ * blockZ < (long) spawnProtectionRadius * spawnProtectionRadius) {
+            if ((long) blockX * blockX + (long) blockZ * blockZ
+                    < (long) spawnProtectionRadius * spawnProtectionRadius) {
                 return false;
             }
         }
 
         long worldSeed = chunk.getWorld().getSeed();
+        long typeSeed = worldSeed + structureType.name().hashCode() * 7919L;
 
-        // Create a unique seed for each structure type
-        long typeSeed = worldSeed + structureType.name().hashCode() * 7919; // Use a prime number for better distribution
-
-        // Check all nearby grid cells that could have a structure landing on this chunk
         long minimumGridX = ((long) x - maxOffset) / gridDistance - 1;
         long maximumGridX = ((long) x + maxOffset) / gridDistance + 1;
         long minimumGridZ = ((long) z - maxOffset) / gridDistance - 1;
@@ -219,88 +206,97 @@ public class NewChunkLoadEvent implements Listener {
         int offsetBound = (int) (2L * maxOffset + 1L);
         for (long gridX = minimumGridX; gridX <= maximumGridX; gridX++) {
             for (long gridZ = minimumGridZ; gridZ <= maximumGridZ; gridZ++) {
-                // Base position of this grid cell
                 long baseX = gridX * gridDistance;
                 long baseZ = gridZ * gridDistance;
 
-                // Apply diamond pattern offset (shift every other row by gridDistance/2)
-                if (gridZ % 2L != 0) {
-                    baseX += gridDistance / 2;
-                }
+                if (gridZ % 2L != 0) baseX += gridDistance / 2;
 
-                // Create a seeded random for this specific grid cell
-                Random cellRandom = new Random(typeSeed ^ (((long)baseX << 32) | (baseZ & 0xFFFFFFFFL)));
-
-                // Generate the random offset for structure in this grid cell
+                Random cellRandom = new Random(
+                        typeSeed ^ ((baseX << 32) | (baseZ & 0xFFFFFFFFL)));
                 int offsetX = maxOffset > 0 ? cellRandom.nextInt(offsetBound) - maxOffset : 0;
                 int offsetZ = maxOffset > 0 ? cellRandom.nextInt(offsetBound) - maxOffset : 0;
 
-                // Final structure position for this grid cell
-                long structureX = baseX + offsetX;
-                long structureZ = baseZ + offsetZ;
-
-                // If this chunk matches the structure position
-                if (x == structureX && z == structureZ) {
-                    return true;
-                }
+                if (x == baseX + offsetX && z == baseZ + offsetZ) return true;
             }
         }
 
         return false;
     }
 
-    private static void surfaceScanner(Chunk chunk) {
+    private static void surfaceScanner(Chunk chunk, List<Runnable> jobs) {
         if (SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.SURFACE).isEmpty()) return;
-        // Get config values directly instead of using static finals
-        if (!isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.SURFACE,
-                DefaultConfig.getDistanceSurface(), DefaultConfig.getMaxOffsetSurface())) return;
-        new FitSurfaceBuilding(chunk);
+        if (!isValidStructurePosition(
+                chunk,
+                GeneratorConfigFields.StructureType.SURFACE,
+                DefaultConfig.getDistanceSurface(),
+                DefaultConfig.getMaxOffsetSurface())) return;
+        jobs.add(() -> new FitSurfaceBuilding(chunk));
     }
 
-    private static void shallowUndergroundScanner(Chunk chunk) {
+    private static void shallowUndergroundScanner(Chunk chunk, List<Runnable> jobs) {
         if (SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.UNDERGROUND_SHALLOW).isEmpty()) return;
-        if (!isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.UNDERGROUND_SHALLOW,
-                DefaultConfig.getDistanceShallow(), DefaultConfig.getMaxOffsetShallow())) return;
-        FitUndergroundShallowBuilding.fit(chunk);
+        if (!isValidStructurePosition(
+                chunk,
+                GeneratorConfigFields.StructureType.UNDERGROUND_SHALLOW,
+                DefaultConfig.getDistanceShallow(),
+                DefaultConfig.getMaxOffsetShallow())) return;
+        jobs.add(() -> FitUndergroundShallowBuilding.fit(chunk));
     }
 
-    private static void deepUndergroundScanner(Chunk chunk) {
+    private static void deepUndergroundScanner(Chunk chunk, List<Runnable> jobs) {
         if (SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.UNDERGROUND_DEEP).isEmpty()) return;
-        if (!isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.UNDERGROUND_DEEP,
-                DefaultConfig.getDistanceDeep(), DefaultConfig.getMaxOffsetDeep())) return;
-        FitUndergroundDeepBuilding.fit(chunk);
+        if (!isValidStructurePosition(
+                chunk,
+                GeneratorConfigFields.StructureType.UNDERGROUND_DEEP,
+                DefaultConfig.getDistanceDeep(),
+                DefaultConfig.getMaxOffsetDeep())) return;
+        jobs.add(() -> FitUndergroundDeepBuilding.fit(chunk));
     }
 
-    private static void skyScanner(Chunk chunk) {
+    private static void skyScanner(Chunk chunk, List<Runnable> jobs) {
         if (SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.SKY).isEmpty()) return;
-        if (!isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.SKY,
-                DefaultConfig.getDistanceSky(), DefaultConfig.getMaxOffsetSky())) return;
-        new FitAirBuilding(chunk);
+        if (!isValidStructurePosition(
+                chunk,
+                GeneratorConfigFields.StructureType.SKY,
+                DefaultConfig.getDistanceSky(),
+                DefaultConfig.getMaxOffsetSky())) return;
+        jobs.add(() -> new FitAirBuilding(chunk));
     }
 
-    private static void liquidSurfaceScanner(Chunk chunk) {
+    private static void liquidSurfaceScanner(Chunk chunk, List<Runnable> jobs) {
         if (SchematicContainer.getSchematics().get(GeneratorConfigFields.StructureType.LIQUID_SURFACE).isEmpty()) return;
-        if (!isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.LIQUID_SURFACE,
-                DefaultConfig.getDistanceLiquid(), DefaultConfig.getMaxOffsetLiquid())) return;
-        new FitLiquidBuilding(chunk);
+        if (!isValidStructurePosition(
+                chunk,
+                GeneratorConfigFields.StructureType.LIQUID_SURFACE,
+                DefaultConfig.getDistanceLiquid(),
+                DefaultConfig.getMaxOffsetLiquid())) return;
+        jobs.add(() -> new FitLiquidBuilding(chunk));
     }
 
-    private static void dungeonScanner(Chunk chunk) {
+    private static void dungeonScanner(Chunk chunk, List<Runnable> jobs) {
         if (ModuleGeneratorsConfig.getModuleGenerators().isEmpty()) return;
-        if (!isValidStructurePosition(chunk, GeneratorConfigFields.StructureType.DUNGEON,
-                DefaultConfig.getDistanceDungeon(), DefaultConfig.getMaxOffsetDungeon())) return;
+        if (!isValidStructurePosition(
+                chunk,
+                GeneratorConfigFields.StructureType.DUNGEON,
+                DefaultConfig.getDistanceDungeon(),
+                DefaultConfig.getMaxOffsetDungeon())) return;
+
         List<ModuleGeneratorsConfigFields> validatedGenerators = new ArrayList<>();
-        for (ModuleGeneratorsConfigFields moduleGeneratorsConfigFields : ModuleGeneratorsConfig.getModuleGenerators().values()){
-            if (moduleGeneratorsConfigFields.getValidWorlds() != null && !moduleGeneratorsConfigFields.getValidWorlds().isEmpty() && !moduleGeneratorsConfigFields.getValidWorlds().contains(chunk.getWorld().getName())) continue;
-            if (moduleGeneratorsConfigFields.getValidWorldEnvironments() != null && !moduleGeneratorsConfigFields.getValidWorldEnvironments().isEmpty() && !moduleGeneratorsConfigFields.getValidWorldEnvironments().contains(chunk.getWorld().getEnvironment())) continue;
-            validatedGenerators.add(moduleGeneratorsConfigFields);
+        for (ModuleGeneratorsConfigFields fields : ModuleGeneratorsConfig.getModuleGenerators().values()) {
+            if (fields.getValidWorlds() != null && !fields.getValidWorlds().isEmpty()
+                    && !fields.getValidWorlds().contains(chunk.getWorld().getName())) continue;
+            if (fields.getValidWorldEnvironments() != null && !fields.getValidWorldEnvironments().isEmpty()
+                    && !fields.getValidWorldEnvironments().contains(chunk.getWorld().getEnvironment())) continue;
+            validatedGenerators.add(fields);
         }
         if (validatedGenerators.isEmpty()) return;
-        ModuleGeneratorsConfigFields moduleGeneratorsConfigFields = validatedGenerators.get(ThreadLocalRandom.current().nextInt(0, validatedGenerators.size()));
-        WFCGenerator.generateNaturally(
-                moduleGeneratorsConfigFields,
-                chunk.getBlock(8, moduleGeneratorsConfigFields.getCenterModuleAltitude(), 8).getLocation(),
+
+        ModuleGeneratorsConfigFields fields = validatedGenerators.get(
+                ThreadLocalRandom.current().nextInt(validatedGenerators.size()));
+        jobs.add(() -> WFCGenerator.generateNaturally(
+                fields,
+                chunk.getBlock(8, fields.getCenterModuleAltitude(), 8).getLocation(),
                 chunk.getX(),
-                chunk.getZ());
+                chunk.getZ()));
     }
 }
