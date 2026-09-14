@@ -31,7 +31,11 @@ import org.bukkit.util.Vector;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
+import java.util.EnumSet;
+import java.util.Iterator;
+import java.util.Locale;
+import java.util.NoSuchElementException;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Function;
 
@@ -39,6 +43,7 @@ public class Schematic {
     private static final Queue<PasteOperation> pasteQueue = new ConcurrentLinkedQueue<>();
     private static boolean erroredOnce = false;
     private static boolean isDistributedPasting = false;
+    private static boolean pastePausedForLoad = false;
     private static BukkitTask activePasteTask = null;
     private static PasteOperation activePasteOperation = null;
 
@@ -95,6 +100,10 @@ public class Schematic {
     public static Clipboard load(File schematicFile) {
         Clipboard clipboard;
         ClipboardFormat format = ClipboardFormats.findByFile(schematicFile);
+        if (format == null) {
+            Logger.warn("Could not determine schematic format for " + schematicFile.getName());
+            return null;
+        }
 
         try (LegacySchematicSanitizer.SanitizedInput sanitizedInput = LegacySchematicSanitizer.open(schematicFile);
              ClipboardReader reader = format.getReader(sanitizedInput.inputStream())) {
@@ -102,12 +111,12 @@ public class Schematic {
             if (sanitizedInput.removedBedBlockEntities() > 0) {
                 Logger.info("Removed " + sanitizedInput.removedBedBlockEntities()
                         + " obsolete minecraft:bed block-entity record(s) from "
-                        + schematicFile.getName() + " for Minecraft 26.2 compatibility.");
+                        + schematicFile.getName() + " for modern Minecraft compatibility.");
             }
             if (sanitizedInput.replacedBedPaletteEntries() > 0) {
                 Logger.info("Replaced " + sanitizedInput.replacedBedPaletteEntries()
-                        + " legacy minecraft:bed palette entr" +
-                        (sanitizedInput.replacedBedPaletteEntries() == 1 ? "y" : "ies")
+                        + " legacy minecraft:bed palette entr"
+                        + (sanitizedInput.replacedBedPaletteEntries() == 1 ? "y" : "ies")
                         + " with minecraft:red_bed in " + schematicFile.getName() + ".");
             }
         } catch (IOException e) {
@@ -118,7 +127,8 @@ public class Schematic {
             e.printStackTrace();
             return null;
         } catch (Exception e) {
-            Logger.warn("Failed to load schematic " + schematicFile.getName() + " ! 99% of the time, this is because you are not using the correct WorldEdit version for your Minecraft server. You should be downloading WorldEdit from here https://dev.bukkit.org/projects/worldedit . You can check which versions the download links are compatible with by hovering over them.");
+            Logger.warn("Failed to load schematic " + schematicFile.getName()
+                    + "! This usually means the WorldEdit/FAWE build is not compatible with the server version.");
             boolean firstFailure = !erroredOnce;
             erroredOnce = true;
             if (firstFailure) e.printStackTrace();
@@ -128,6 +138,7 @@ public class Schematic {
         return clipboard;
     }
 
+    /** Synchronous component paste for callers that require completion before returning. */
     public static void paste(Clipboard clipboard, Location location) {
         World world = BukkitAdapter.adapt(location.getWorld());
         try (EditSession editSession = WorldEdit.getInstance().newEditSession(world)) {
@@ -187,7 +198,9 @@ public class Schematic {
                         adjustedClipboardLocation.y() + 1,
                         adjustedClipboardLocation.z()));
                 Material pedestalMaterial = pedestalMaterialProvider.apply(isGround);
-                pasteBlock(new PasteBlock(worldBlock, pedestalMaterial.createBlockData(), null));
+                if (pedestalMaterial != null) {
+                    pasteBlock(new PasteBlock(worldBlock, pedestalMaterial.createBlockData(), null));
+                }
             }
         } else {
             pasteBlock(new PasteBlock(worldBlock, blockData, null));
@@ -200,12 +213,21 @@ public class Schematic {
             Vector schematicOffset,
             Function<Boolean, Material> pedestalMaterialProvider,
             Runnable onComplete) {
-        pasteQueue.add(new ClipboardPasteOperation(
+        enqueue(new ClipboardPasteOperation(
                 schematicClipboard,
                 location.clone().add(schematicOffset),
                 pedestalMaterialProvider,
                 onComplete));
+    }
+
+    /** Allows modular generation and other producers to share the same serialized paste lane. */
+    public static void enqueue(PasteOperation operation) {
+        pasteQueue.add(operation);
         startQueueIfIdle();
+    }
+
+    public static boolean isBusy() {
+        return isDistributedPasting || activePasteOperation != null || !pasteQueue.isEmpty();
     }
 
     private static void startQueueIfIdle() {
@@ -213,9 +235,7 @@ public class Schematic {
     }
 
     private static void processNextPaste() {
-        long maxNanosPerTick = Math.max(
-                (long) (50_000_000D * DefaultConfig.getPercentageOfTickUsedForPasting()),
-                2_000_000L);
+        long maxNanosPerTick = maxNanosPerTick(DefaultConfig.getPercentageOfTickUsedForPasting());
 
         RuntimeException firstFailure = null;
         int abandoned = 0;
@@ -239,10 +259,15 @@ public class Schematic {
                         }
 
                         try {
+                            if (shouldPauseForServerLoad()) return;
+
                             long stopTime = System.nanoTime() + maxNanosPerTick;
                             boolean processedAtLeastOne = false;
-                            while (operation.hasNext() &&
-                                    (!processedAtLeastOne || System.nanoTime() < stopTime)) {
+                            int steps = 0;
+                            while (operation.hasNext()
+                                    && steps++ < 4096
+                                    && (!processedAtLeastOne || System.nanoTime() < stopTime)) {
+                                if (!operation.ready()) break;
                                 operation.pasteNext();
                                 processedAtLeastOne = true;
                             }
@@ -276,6 +301,42 @@ public class Schematic {
         }
     }
 
+    /** Converts the configured tick share to a bounded per-tick work budget. */
+    static long maxNanosPerTick(double percentage) {
+        return PasteBudget.nanosPerTick(percentage);
+    }
+
+    private static boolean shouldPauseForServerLoad() {
+        if (!DefaultConfig.isPlayerGenerationThrottling()) {
+            pastePausedForLoad = false;
+            return false;
+        }
+
+        double mspt = Bukkit.getAverageTickTime();
+        double[] samples = Bukkit.getTPS();
+        double tps = samples.length == 0 ? 20.0 : samples[0];
+
+        if (pastePausedForLoad) {
+            if (mspt <= DefaultConfig.getPlayerGenerationResumeMSPT()
+                    && tps >= DefaultConfig.getPlayerGenerationResumeTPS()) {
+                pastePausedForLoad = false;
+                Logger.info("BetterStructures paste queue resumed at "
+                        + String.format(Locale.ROOT, "%.1f MSPT / %.2f TPS", mspt, tps) + ".");
+                return false;
+            }
+            return true;
+        }
+
+        if (mspt >= DefaultConfig.getPlayerGenerationPauseMSPT()
+                || tps <= DefaultConfig.getPlayerGenerationPauseTPS()) {
+            pastePausedForLoad = true;
+            Logger.warn("BetterStructures paste queue paused to protect TPS at "
+                    + String.format(Locale.ROOT, "%.1f MSPT / %.2f TPS", mspt, tps) + ".");
+            return true;
+        }
+        return false;
+    }
+
     private static void pasteBlock(PasteBlock pasteBlock) {
         if (pasteBlock.blockData() != null) {
             pasteBlock.block().setBlockData(pasteBlock.blockData());
@@ -304,25 +365,54 @@ public class Schematic {
         } catch (Throwable throwable) {
             Logger.warn("A BetterStructures paste completion callback failed: " + throwable.getMessage());
             throwable.printStackTrace();
+        } finally {
+            try {
+                operation.close();
+            } catch (Throwable throwable) {
+                Logger.warn("A BetterStructures paste cleanup callback failed: " + throwable.getMessage());
+            }
         }
     }
 
     private static void abortActivePaste() {
+        if (activePasteOperation != null) {
+            try {
+                activePasteOperation.close();
+            } catch (Throwable throwable) {
+                Logger.warn("Failed to clean up an aborted BetterStructures paste: " + throwable.getMessage());
+            }
+        }
         activePasteOperation = null;
         activePasteTask = null;
     }
 
     public static void shutdown() {
+        for (PasteOperation operation : pasteQueue) {
+            try {
+                operation.close();
+            } catch (Throwable ignored) {
+            }
+        }
         pasteQueue.clear();
         if (activePasteTask != null) activePasteTask.cancel();
         activePasteTask = null;
-        activePasteOperation = null;
+        abortActivePaste();
         isDistributedPasting = false;
+        pastePausedForLoad = false;
     }
 
-    private interface PasteOperation {
+    public interface PasteOperation {
         boolean hasNext();
+
+        default boolean ready() {
+            return true;
+        }
+
+        default void close() {
+        }
+
         void pasteNext();
+
         void onComplete();
     }
 
@@ -332,6 +422,8 @@ public class Schematic {
         private final Function<Boolean, Material> pedestalMaterialProvider;
         private final PasteCursor cursor;
         private final Runnable onComplete;
+        private PasteChunkReadiness chunks;
+        private PasteCoordinate nextCoordinate;
 
         private ClipboardPasteOperation(
                 Clipboard clipboard,
@@ -350,17 +442,40 @@ public class Schematic {
 
         @Override
         public boolean hasNext() {
-            return cursor.hasNext();
+            return nextCoordinate != null || cursor.hasNext();
+        }
+
+        @Override
+        public boolean ready() {
+            if (nextCoordinate == null) {
+                if (!cursor.hasNext()) return true;
+                nextCoordinate = cursor.next();
+            }
+            org.bukkit.World world = adjustedLocation.getWorld();
+            if (world == null) throw new IllegalStateException("Paste world is unavailable");
+            if (chunks == null) chunks = new PasteChunkReadiness(world);
+            Location target = adjustedLocation.clone().add(
+                    nextCoordinate.x(), nextCoordinate.y(), nextCoordinate.z());
+            return chunks.ready(target);
         }
 
         @Override
         public void pasteNext() {
-            pasteClipboardBlock(clipboard, adjustedLocation, pedestalMaterialProvider, cursor.next());
+            if (nextCoordinate == null) nextCoordinate = cursor.next();
+            pasteClipboardBlock(clipboard, adjustedLocation, pedestalMaterialProvider, nextCoordinate);
+            nextCoordinate = null;
         }
 
         @Override
         public void onComplete() {
             if (onComplete != null) onComplete.run();
+        }
+
+        @Override
+        public void close() {
+            if (chunks != null) chunks.close();
+            chunks = null;
+            nextCoordinate = null;
         }
     }
 
