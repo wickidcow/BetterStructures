@@ -104,6 +104,15 @@ public class WFCGenerator {
                 triggeringChunkZ));
     }
 
+    /**
+     * True while any modular generator is still assembling a lattice. The Albion player-generation
+     * scheduler uses this to avoid starting another expensive terrain fit between WFC assembly and
+     * the moment the completed dungeon enters the shared paste queue.
+     */
+    public static boolean isBusy() {
+        return !ACTIVE_GENERATORS.isEmpty();
+    }
+
     public static void shutdown() {
         List.copyOf(ACTIVE_GENERATORS).forEach(WFCGenerator::cancel);
         ACTIVE_GENERATORS.clear();
@@ -279,9 +288,7 @@ public class WFCGenerator {
     }
 
     private void paste(WFCNode gridCell, ModulesContainer modulesContainer) {
-        // Record the decision for backtracking
         spatialGrid.recordCollapseDecision(gridCell, modulesContainer);
-
         gridCell.setModulesContainer(modulesContainer);
         gridCell.getOrientedNeighbors().values().forEach(spatialGrid::updateNodeEntropy);
     }
@@ -307,7 +314,6 @@ public class WFCGenerator {
     }
 
     private void rollbackChunk() {
-        // Use proper backtracking instead of just resetting
         if (spatialGrid.backtrack()) {
             completedNodes = Math.max(0, completedNodes - 1);
             updateProgressBar("Backtracking... (" + spatialGrid.getBacktrackDepth() + " decisions remaining)");
@@ -356,9 +362,7 @@ public class WFCGenerator {
         removeProgressBar();
     }
 
-    /**
-     * Cancels the generation process.
-     */
+    /** Cancels the generation process. */
     public void cancel() {
         isCancelled = true;
         runOnPrimaryThread(() -> {
@@ -369,14 +373,23 @@ public class WFCGenerator {
     }
 
     private void instantPaste() {
-        // This guarantees that the paste order is grouped by chunk, making pasting faster down the line.
         Deque<WFCNode> orderedPasteDeque = new ArrayDeque<>();
-        forEachPasteCoordinate(spatialGrid.getLatticeRadius(), spatialGrid.getMinYLevel(), spatialGrid.getMaxYLevel(), coordinate -> {
-            WFCNode cell = spatialGrid.getNodeMap().remove(coordinate);
-            if (cell != null) orderedPasteDeque.add(cell);
-        });
+        forEachPasteCoordinate(
+                spatialGrid.getLatticeRadius(),
+                spatialGrid.getMinYLevel(),
+                spatialGrid.getMaxYLevel(),
+                coordinate -> {
+                    WFCNode cell = spatialGrid.getNodeMap().remove(coordinate);
+                    if (cell != null) orderedPasteDeque.add(cell);
+                });
 
-        new ModulePasting(world, worldFolder, orderedPasteDeque, moduleGeneratorsConfigFields.getSpawnPoolSuffix(), startLocation, moduleGeneratorsConfigFields);
+        new ModulePasting(
+                world,
+                worldFolder,
+                orderedPasteDeque,
+                moduleGeneratorsConfigFields.getSpawnPoolSuffix(),
+                startLocation,
+                moduleGeneratorsConfigFields);
     }
 
     private static void runOnPrimaryThread(Runnable runnable) {
