@@ -12,7 +12,11 @@ import com.magmaguy.elitemobs.mobconstructor.custombosses.InstancedBossEntity;
 import com.magmaguy.magmacore.instance.MatchInstance;
 import com.magmaguy.magmacore.util.Logger;
 import lombok.Getter;
-import org.bukkit.*;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.joml.Vector2i;
@@ -45,27 +49,33 @@ public class ModularWorld {
     public ModularWorld(World world, File worldFolder, List<ModulePasting.InterpretedSign> interpretedSigns) {
         this.world = world;
         this.worldFolder = worldFolder;
-        for (ModulePasting.InterpretedSign interpretedSign : interpretedSigns) {
-            for (String signText : interpretedSign.text()) {
-                if (signText.contains("[spawn]"))
-                    spawnLocations.add(new Location(world,
-                            (int) interpretedSign.location().getX(),
-                            (int) interpretedSign.location().getY(),
-                            (int) interpretedSign.location().getZ()));
-                else if (signText.contains("[exit]")) {
-                    processExitLocations(interpretedSign);
-                } else if (signText.contains("[chest]")) {
-                    chestLocations.add(new Location(world,
-                            (int) interpretedSign.location().getX(),
-                            (int) interpretedSign.location().getY(),
-                            (int) interpretedSign.location().getZ()));
-                } else if (signText.contains("[barrel]")) {
-                    barrelLocations.add(new Location(world,
-                            (int) interpretedSign.location().getX(),
-                            (int) interpretedSign.location().getY(),
-                            (int) interpretedSign.location().getZ()));
-                } else
-                    otherLocations.add(interpretedSign);
+        interpretedSigns.forEach(this::addSign);
+    }
+
+    void addSign(ModulePasting.InterpretedSign interpretedSign) {
+        for (String signText : interpretedSign.text()) {
+            if (signText.contains("[spawn]")) {
+                spawnLocations.add(new Location(
+                        world,
+                        (int) interpretedSign.location().getX(),
+                        (int) interpretedSign.location().getY(),
+                        (int) interpretedSign.location().getZ()));
+            } else if (signText.contains("[exit]")) {
+                processExitLocations(interpretedSign);
+            } else if (signText.contains("[chest]")) {
+                chestLocations.add(new Location(
+                        world,
+                        (int) interpretedSign.location().getX(),
+                        (int) interpretedSign.location().getY(),
+                        (int) interpretedSign.location().getZ()));
+            } else if (signText.contains("[barrel]")) {
+                barrelLocations.add(new Location(
+                        world,
+                        (int) interpretedSign.location().getX(),
+                        (int) interpretedSign.location().getY(),
+                        (int) interpretedSign.location().getZ()));
+            } else {
+                otherLocations.add(interpretedSign);
             }
         }
     }
@@ -82,19 +92,23 @@ public class ModularWorld {
                 || interpretedSign.text().get(1).isBlank()
                 || interpretedSign.text().get(2).isBlank()) {
             Logger.warn("Failed to get both exit clipboard filenames from sign " + interpretedSign.location());
-            exitLocations.add(new ExitLocation(new Location(world,
-                    (int) interpretedSign.location().getX(),
-                    (int) interpretedSign.location().getY(),
-                    (int) interpretedSign.location().getZ()),
+            exitLocations.add(new ExitLocation(
+                    new Location(
+                            world,
+                            (int) interpretedSign.location().getX(),
+                            (int) interpretedSign.location().getY(),
+                            (int) interpretedSign.location().getZ()),
                     "genericelevator_up",
                     "genericelevator_down"));
             return;
         }
 
-        exitLocations.add(new ExitLocation(new Location(world,
-                (int) interpretedSign.location().getX(),
-                (int) interpretedSign.location().getY(),
-                (int) interpretedSign.location().getZ()),
+        exitLocations.add(new ExitLocation(
+                new Location(
+                        world,
+                        (int) interpretedSign.location().getX(),
+                        (int) interpretedSign.location().getY(),
+                        (int) interpretedSign.location().getZ()),
                 interpretedSign.text().get(1),
                 interpretedSign.text().get(2)));
     }
@@ -117,11 +131,13 @@ public class ModularWorld {
         return barrels;
     }
 
-    //todo: maybe this should go into extractioncraft later
     public List<Location> spawnInaccessibleExitLocations() {
         List<Location> randomizedLocations = new ArrayList<>();
         for (ExitLocation exitLocation : exitLocations) {
-            File exitLocationsFile = new File(MetadataHandler.PLUGIN.getDataFolder().getAbsolutePath() + File.separatorChar + "components" + File.separatorChar + exitLocation.clipboardFilenameUp + ".schem");
+            File exitLocationsFile = new File(
+                    MetadataHandler.PLUGIN.getDataFolder().getAbsolutePath()
+                            + File.separatorChar + "components"
+                            + File.separatorChar + exitLocation.clipboardFilenameUp + ".schem");
             if (!exitLocationsFile.exists()) {
                 Logger.warn("Failed to find elevator file");
                 continue;
@@ -135,7 +151,10 @@ public class ModularWorld {
     public List<Location> spawnAccessibleExitLocations() {
         List<Location> randomizedLocations = new ArrayList<>();
         for (ExitLocation exitLocation : exitLocations) {
-            File exitLocationsFile = new File(MetadataHandler.PLUGIN.getDataFolder().getAbsolutePath() + File.separatorChar + "components" + File.separatorChar + exitLocation.clipboardFilenameDown + ".schem");
+            File exitLocationsFile = new File(
+                    MetadataHandler.PLUGIN.getDataFolder().getAbsolutePath()
+                            + File.separatorChar + "components"
+                            + File.separatorChar + exitLocation.clipboardFilenameDown + ".schem");
             if (!exitLocationsFile.exists()) {
                 Logger.warn("Failed to find elevator file");
                 continue;
@@ -150,53 +169,80 @@ public class ModularWorld {
         new BukkitRunnable() {
             @Override
             public void run() {
-                for (ModulePasting.InterpretedSign otherLocation : otherLocations)
-                    for (String string : otherLocation.text())
-                        if (string.contains("pool")) {
-                            String parsedString = extractPoolText(string) + ".yml";
-                            SpawnPoolsConfigFields spawnPoolsConfigFields = SpawnPoolsConfig.getConfigFields(parsedString);
-                            if (spawnPoolsConfigFields == null) {
-                                Logger.warn("Could not find spawn pool " + parsedString);
-                                continue;
-                            }
-                            if (spawnPoolsConfigFields.getPoolStrings() == null || spawnPoolsConfigFields.getPoolStrings().isEmpty()) {
-                                Logger.warn("Spawn pool " + parsedString + " has no entries");
-                                continue;
-                            }
-                            String bossFilename = spawnPoolsConfigFields.getPoolStrings().get(
-                                    ThreadLocalRandom.current().nextInt(spawnPoolsConfigFields.getPoolStrings().size()));
-                            CustomBossesConfigFields customBossesConfigFields = CustomBossesConfig.getCustomBoss(bossFilename);
-                            if (customBossesConfigFields == null) {
-                                Logger.warn("Spawn pool " + parsedString + " references missing boss " + bossFilename);
-                                continue;
-                            }
-                            if (!customBossesConfigFields.isInstanced()) {
-                                CustomBossEntity customBossEntity = new CustomBossEntity(customBossesConfigFields);
-                                customBossEntity.spawn(otherLocation.location(), true);
-                            } else {
-                                scheduledInstancedEntities.add(new ScheduledInstancedEntity(otherLocation.location(), customBossesConfigFields, parsedString, spawnPoolsConfigFields.getMinLevel(), spawnPoolsConfigFields.getMaxLevel()));
-                            }
-                        }
-                //got to keep the memory clear for this one, unfortunately
+                for (ModulePasting.InterpretedSign otherLocation : List.copyOf(otherLocations)) {
+                    spawnOtherEntitiesAt(otherLocation);
+                }
                 otherLocations.clear();
                 generationFinished();
             }
         }.runTask(MetadataHandler.PLUGIN);
     }
 
+    void spawnOtherEntitiesAt(ModulePasting.InterpretedSign otherLocation) {
+        for (String string : otherLocation.text()) {
+            if (!string.contains("pool")) continue;
+
+            String poolName = extractPoolText(string);
+            if (poolName == null || poolName.isBlank()) {
+                Logger.warn("Could not parse spawn pool at " + otherLocation.location());
+                continue;
+            }
+            String parsedString = poolName + ".yml";
+            SpawnPoolsConfigFields spawnPoolsConfigFields = SpawnPoolsConfig.getConfigFields(parsedString);
+            if (spawnPoolsConfigFields == null) {
+                Logger.warn("Could not find spawn pool " + parsedString);
+                continue;
+            }
+            if (spawnPoolsConfigFields.getPoolStrings() == null
+                    || spawnPoolsConfigFields.getPoolStrings().isEmpty()) {
+                Logger.warn("Spawn pool " + parsedString + " has no entries");
+                continue;
+            }
+            String bossFilename = spawnPoolsConfigFields.getPoolStrings().get(
+                    ThreadLocalRandom.current().nextInt(spawnPoolsConfigFields.getPoolStrings().size()));
+            CustomBossesConfigFields customBossesConfigFields = CustomBossesConfig.getCustomBoss(bossFilename);
+            if (customBossesConfigFields == null) {
+                Logger.warn("Spawn pool " + parsedString + " references missing boss " + bossFilename);
+                continue;
+            }
+            if (!customBossesConfigFields.isInstanced()) {
+                CustomBossEntity customBossEntity = new CustomBossEntity(customBossesConfigFields);
+                customBossEntity.spawn(otherLocation.location(), true);
+            } else {
+                scheduledInstancedEntities.add(new ScheduledInstancedEntity(
+                        otherLocation.location(),
+                        customBossesConfigFields,
+                        parsedString,
+                        spawnPoolsConfigFields.getMinLevel(),
+                        spawnPoolsConfigFields.getMaxLevel()));
+            }
+        }
+        otherLocations.remove(otherLocation);
+    }
+
     public List<InstancedBossEntity> spawnInstancedEntities(MatchInstance matchInstance) {
         List<InstancedBossEntity> instancedBossEntities = new ArrayList<>();
         for (ScheduledInstancedEntity scheduledInstancedEntity : scheduledInstancedEntities) {
-            int totalRadius = 2 * 128 + 64;//todo this is just a placeholder for now that hardcodes the radius
-            Vector2i center = new Vector2i(64, 64); //todo this is just a placeholder for now that hardcodes the center
-            Vector2i entityLocation = new Vector2i(scheduledInstancedEntity.location.getBlockX(), scheduledInstancedEntity.location.getBlockZ());
+            int totalRadius = 2 * 128 + 64;
+            Vector2i center = new Vector2i(64, 64);
+            Vector2i entityLocation = new Vector2i(
+                    scheduledInstancedEntity.location.getBlockX(),
+                    scheduledInstancedEntity.location.getBlockZ());
             double distance = center.distance(entityLocation);
             double percentageDistance = distance / totalRadius;
-            int level = (int) Math.round((1.0 - percentageDistance) * scheduledInstancedEntity.maxLevel + percentageDistance * scheduledInstancedEntity.minLevel);
+            int level = (int) Math.round(
+                    (1.0 - percentageDistance) * scheduledInstancedEntity.maxLevel
+                            + percentageDistance * scheduledInstancedEntity.minLevel);
 
-            InstancedBossEntity instancedBossEntity = new InstancedBossEntity(scheduledInstancedEntity.configFields, scheduledInstancedEntity.location, matchInstance, level);
+            InstancedBossEntity instancedBossEntity = new InstancedBossEntity(
+                    scheduledInstancedEntity.configFields,
+                    scheduledInstancedEntity.location,
+                    matchInstance,
+                    level);
             instancedBossEntity.spawn(true);
-            instancedBossEntity.addCustomData(new NamespacedKey("betterstructures", "spawnpool"), scheduledInstancedEntity.originalSpawnPool);
+            instancedBossEntity.addCustomData(
+                    new NamespacedKey("betterstructures", "spawnpool"),
+                    scheduledInstancedEntity.originalSpawnPool);
             instancedBossEntities.add(instancedBossEntity);
         }
         return instancedBossEntities;
@@ -214,6 +260,6 @@ public class ModularWorld {
             CustomBossesConfigFields configFields,
             String originalSpawnPool,
             int minLevel,
-            int maxLevel
-    ){}
+            int maxLevel) {
+    }
 }
