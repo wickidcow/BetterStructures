@@ -1,5 +1,5 @@
 name: BetterStructures
-version: '2.7.0'
+version: '2.7.2'
 main: com.magmaguy.betterstructures.BetterStructures
 api-version: '26.2'
 depend: [ FastAsyncWorldEdit ]
@@ -18,6 +18,8 @@ website: magmaguy.com
 commands:
   betterstructures:
     description: Main command
+    # Any existing child grant permits root access; each child still checks its own permission.
+    permission: 'betterstructures.*;betterstructures.setup;betterstructures.initialize;betterstructures.generatemodules'
     aliases:
       - bs
 permissions:
