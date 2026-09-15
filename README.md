@@ -63,6 +63,8 @@ BetterStructures analyzes terrain and chooses appropriate placement locations, a
 
 This repository is a **downstream, unofficial maintenance fork** of **MagmaGuy/BetterStructures**. The current branch incorporates the upstream **BetterStructures 2.7.2** codebase and then layers focused Paper 26.2 compatibility, performance, build, stability, and optional integration work on top.
 
+**Current Albion sync:** BetterStructures 2.7.2, finalized September 14, 2026.
+
 This fork is maintained specifically for **AlbionMC.com**. Fork-specific changes should remain focused on compatibility, performance, and integrations useful to that environment rather than changing BetterStructures into a different project.
 
 ### Fork goals
