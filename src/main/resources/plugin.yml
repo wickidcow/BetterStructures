@@ -19,7 +19,7 @@ commands:
   betterstructures:
     description: Main command
     # Any existing child grant permits root access; each child still checks its own permission.
-    permission: 'betterstructures.*;betterstructures.setup;betterstructures.initialize;betterstructures.generatemodules'
+    permission: 'betterstructures.*;betterstructures.setup;betterstructures.initialize;betterstructures.generatemodules;betterstructures.status'
     aliases:
       - bs
 permissions:
@@ -28,6 +28,9 @@ permissions:
     default: op
   betterstructures.initialize:
     description: Gives admins access to the /betterstructures initialize command
+    default: op
+  betterstructures.status:
+    description: Gives admins access to the /betterstructures status command
     default: op
   betterstructures.generatemodules.slowly:
     description: Gives admins access to the /betterstructures generateModulesSlowly command
