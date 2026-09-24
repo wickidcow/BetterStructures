@@ -204,6 +204,7 @@ public final class BetterStructures extends JavaPlugin {
         commandManager.registerCommand(new SilentCommand());
         commandManager.registerCommand(new TeleportCommand());
         commandManager.registerCommand(new VersionCommand());
+        commandManager.registerCommand(new StatusCommand());
         commandManager.registerCommand(new SetupCommand());
         commandManager.registerCommand(new FirstTimeSetupCommand());
         commandManager.registerCommand(new NightbreakRecommendedPluginsCommand(this, NIGHTBREAK_PLUGIN_SPEC));
