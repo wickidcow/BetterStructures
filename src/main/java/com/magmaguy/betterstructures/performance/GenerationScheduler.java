@@ -84,6 +84,18 @@ public final class GenerationScheduler {
         return JOBS.size();
     }
 
+    public static boolean isPausedForLoad() {
+        return pausedForLoad;
+    }
+
+    public static int healthyRecoveryTicks() {
+        return healthyRecoveryTicks;
+    }
+
+    public static int requiredRecoveryTicks() {
+        return Math.max(1, DefaultConfig.getPlayerGenerationResumeStableTicks());
+    }
+
     private static void tick() {
         boolean activeGeneration = WFCGenerator.isBusy() || Schematic.isBusy();
         if (!activeGeneration && !RELEASE_AFTER_ACTIVE_WORK.isEmpty()) {
