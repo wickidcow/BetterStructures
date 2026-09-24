@@ -47,6 +47,7 @@ public class ChunkPregenerator implements Listener {
     private BukkitTask currentWorkloadTask;
     private volatile boolean isCancelled = false;
     private volatile boolean isPaused = false;
+    private int healthyResumeChecks = 0;
     private boolean isFinished = false;
 
     public static Set<ChunkPregenerator> getActivePregenerators() {
@@ -104,6 +105,7 @@ public class ChunkPregenerator implements Listener {
         double resumeThreshold = DefaultConfig.getPregenerationTPSResumeThreshold();
         
         if (currentTPS < pauseThreshold) {
+            healthyResumeChecks = 0;
             if (!isPaused) {
                 isPaused = true;
                 Logger.warn("Pausing chunk pregeneration - TPS below " + pauseThreshold + " (current: " + String.format("%.2f", currentTPS) + ")");
@@ -114,11 +116,22 @@ public class ChunkPregenerator implements Listener {
                     queuedChunks.clear();
                 }
             }
-        } else if (isPaused && currentTPS >= resumeThreshold) {
-            isPaused = false;
-            Logger.info("Resuming chunk pregeneration - TPS recovered to " + String.format("%.2f", currentTPS) + " (above " + resumeThreshold + ")");
-            // Resume by generating the current layer again
-            generateNextLayer();
+        } else if (isPaused) {
+            if (currentTPS >= resumeThreshold) {
+                healthyResumeChecks++;
+                int requiredChecks = Math.max(1, DefaultConfig.getPregenerationTPSResumeStableChecks());
+                if (healthyResumeChecks >= requiredChecks) {
+                    isPaused = false;
+                    healthyResumeChecks = 0;
+                    Logger.info("Resuming chunk pregeneration after " + requiredChecks
+                            + " healthy checks - TPS recovered to " + String.format("%.2f", currentTPS)
+                            + " (at or above " + resumeThreshold + ")");
+                    // Resume by generating the current layer again
+                    generateNextLayer();
+                }
+            } else {
+                healthyResumeChecks = 0;
+            }
         }
     }
 
