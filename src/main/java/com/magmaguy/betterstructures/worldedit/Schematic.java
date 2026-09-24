@@ -266,6 +266,14 @@ public class Schematic {
         return isDistributedPasting || activePasteOperation != null || !pasteQueue.isEmpty();
     }
 
+    public static boolean isPausedForLoad() {
+        return pastePausedForLoad;
+    }
+
+    public static int healthyRecoveryTicks() {
+        return pasteHealthyRecoveryTicks;
+    }
+
     private static void startQueueIfIdle() {
         if (!isDistributedPasting) processNextPaste();
     }
