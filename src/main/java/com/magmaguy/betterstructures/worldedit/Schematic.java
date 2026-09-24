@@ -47,6 +47,7 @@ public class Schematic {
     private static boolean erroredOnce = false;
     private static boolean isDistributedPasting = false;
     private static boolean pastePausedForLoad = false;
+    private static int pasteHealthyRecoveryTicks = 0;
     private static BukkitTask activePasteTask = null;
     private static PasteOperation activePasteOperation = null;
 
