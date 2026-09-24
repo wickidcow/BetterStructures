@@ -62,9 +62,9 @@ public class DefaultConfig extends ConfigurationFile {
     @Getter
     private static double playerGenerationResumeMSPT = 32.0;
     @Getter
-    private static double playerGenerationPauseTPS = 19.0;
+    private static double playerGenerationPauseTPS = 18.5;
     @Getter
-    private static double playerGenerationResumeTPS = 19.6;
+    private static double playerGenerationResumeTPS = 19.5;
     @Getter
     private static int playerGenerationResumeStableTicks = 100;
     @Getter
@@ -187,18 +187,18 @@ public class DefaultConfig extends ConfigurationFile {
                 32.0);
         playerGenerationPauseTPS = ConfigurationEngine.setDouble(
                 List.of(
-                        "Pause player-driven BetterStructures work before TPS reaches the 18 TPS danger zone.",
-                        "Default: 19.0. This is intentionally conservative because TPS is a trailing average."),
+                        "Pause player-driven BetterStructures work when TPS reaches the 18.5 TPS protection threshold.",
+                        "Default: 18.5. TPS is a trailing average, so short dips can still occur before the pause is observed."),
                 fileConfiguration,
                 "playerGenerationPauseTPS",
-                19.0);
+                18.5);
         playerGenerationResumeTPS = ConfigurationEngine.setDouble(
                 List.of(
                         "TPS required before paused BetterStructures player-generation work can begin recovering.",
-                        "Default: 19.6. Keep this above playerGenerationPauseTPS to provide hysteresis."),
+                        "Default: 19.5. Keep this above playerGenerationPauseTPS to provide hysteresis."),
                 fileConfiguration,
                 "playerGenerationResumeTPS",
-                19.6);
+                19.5);
         playerGenerationResumeStableTicks = ConfigurationEngine.setInt(
                 List.of(
                         "Number of consecutive healthy server ticks required before player-generation work resumes.",
