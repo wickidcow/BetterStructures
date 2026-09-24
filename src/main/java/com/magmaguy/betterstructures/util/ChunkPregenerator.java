@@ -46,7 +46,9 @@ public class ChunkPregenerator implements Listener {
     private BukkitTask tpsMonitorTask;
     private BukkitTask currentWorkloadTask;
     private volatile boolean isCancelled = false;
+    @Getter
     private volatile boolean isPaused = false;
+    @Getter
     private int healthyResumeChecks = 0;
     private boolean isFinished = false;
 
