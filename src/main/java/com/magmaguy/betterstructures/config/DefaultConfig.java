@@ -62,18 +62,22 @@ public class DefaultConfig extends ConfigurationFile {
     @Getter
     private static double playerGenerationResumeMSPT = 32.0;
     @Getter
-    private static double playerGenerationPauseTPS = 18.5;
+    private static double playerGenerationPauseTPS = 19.0;
     @Getter
-    private static double playerGenerationResumeTPS = 19.5;
+    private static double playerGenerationResumeTPS = 19.6;
+    @Getter
+    private static int playerGenerationResumeStableTicks = 100;
     @Getter
     private static int playerGenerationTicksBetweenJobs = 2;
 
     @Getter
     private static double percentageOfTickUsedForPregeneration = 0.1;
     @Getter
-    private static double pregenerationTPSPauseThreshold = 12.0;
+    private static double pregenerationTPSPauseThreshold = 18.5;
     @Getter
-    private static double pregenerationTPSResumeThreshold = 14.0;
+    private static double pregenerationTPSResumeThreshold = 19.5;
+    @Getter
+    private static int pregenerationTPSResumeStableChecks = 3;
 
     @Getter
     private static int distanceSurface;
@@ -182,15 +186,26 @@ public class DefaultConfig extends ConfigurationFile {
                 "playerGenerationResumeMSPT",
                 32.0);
         playerGenerationPauseTPS = ConfigurationEngine.setDouble(
-                List.of("Secondary TPS threshold for pausing player-driven BetterStructures work."),
+                List.of(
+                        "Pause player-driven BetterStructures work before TPS reaches the 18 TPS danger zone.",
+                        "Default: 19.0. This is intentionally conservative because TPS is a trailing average."),
                 fileConfiguration,
                 "playerGenerationPauseTPS",
-                18.5);
+                19.0);
         playerGenerationResumeTPS = ConfigurationEngine.setDouble(
-                List.of("TPS required before paused BetterStructures player-generation work resumes."),
+                List.of(
+                        "TPS required before paused BetterStructures player-generation work can begin recovering.",
+                        "Default: 19.6. Keep this above playerGenerationPauseTPS to provide hysteresis."),
                 fileConfiguration,
                 "playerGenerationResumeTPS",
-                19.5);
+                19.6);
+        playerGenerationResumeStableTicks = ConfigurationEngine.setInt(
+                List.of(
+                        "Number of consecutive healthy server ticks required before player-generation work resumes.",
+                        "Default: 100 ticks (about 5 seconds). This prevents rapid pause/resume flapping."),
+                fileConfiguration,
+                "playerGenerationResumeStableTicks",
+                100);
         playerGenerationTicksBetweenJobs = ConfigurationEngine.setInt(
                 List.of(
                         "Minimum server ticks between expensive structure-fit jobs selected during player exploration.",
@@ -210,20 +225,24 @@ public class DefaultConfig extends ConfigurationFile {
         pregenerationTPSPauseThreshold = ConfigurationEngine.setDouble(
                 List.of(
                         "The TPS threshold at which chunk pregeneration will pause to protect server performance.",
-                        "When server TPS drops below this value, pregeneration will pause until TPS recovers.",
-                        "Default: 12.0"),
+                        "Default: 18.5 so pregeneration yields before the server falls into the 18 TPS range."),
                 fileConfiguration,
                 "pregenerationTPSPauseThreshold",
-                12.0);
+                18.5);
         pregenerationTPSResumeThreshold = ConfigurationEngine.setDouble(
                 List.of(
-                        "The TPS threshold at which chunk pregeneration will resume after being paused.",
-                        "Pregeneration will only resume when server TPS is at or above this value.",
-                        "Should be higher than the pause threshold to prevent rapid pause/resume cycles.",
-                        "Default: 14.0"),
+                        "The TPS threshold at which chunk pregeneration can begin recovering after being paused.",
+                        "Default: 19.5. Keep this higher than the pause threshold to prevent rapid cycling."),
                 fileConfiguration,
                 "pregenerationTPSResumeThreshold",
-                14.0);
+                19.5);
+        pregenerationTPSResumeStableChecks = ConfigurationEngine.setInt(
+                List.of(
+                        "Number of consecutive healthy TPS monitor checks required before pregeneration resumes.",
+                        "The monitor checks every 2 seconds; default 3 means roughly 6 seconds of stable recovery."),
+                fileConfiguration,
+                "pregenerationTPSResumeStableChecks",
+                3);
         NightbreakPluginUpdater.setAutoDownloadConfigDefault(fileConfiguration);
 
         distanceSurface = validatedDistance(
