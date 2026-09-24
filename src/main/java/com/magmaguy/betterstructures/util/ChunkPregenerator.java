@@ -101,8 +101,10 @@ public class ChunkPregenerator implements Listener {
         }
 
         double currentTPS = getTPS();
-        double pauseThreshold = DefaultConfig.getPregenerationTPSPauseThreshold();
-        double resumeThreshold = DefaultConfig.getPregenerationTPSResumeThreshold();
+        // Keep a runtime safety floor so servers carrying forward the historical 12/14 TPS
+        // config defaults cannot continue pregenerating deep into a lag event after updating.
+        double pauseThreshold = Math.max(18.5, DefaultConfig.getPregenerationTPSPauseThreshold());
+        double resumeThreshold = Math.max(19.5, DefaultConfig.getPregenerationTPSResumeThreshold());
         
         if (currentTPS < pauseThreshold) {
             healthyResumeChecks = 0;
