@@ -344,6 +344,7 @@ public class Schematic {
     private static boolean shouldPauseForServerLoad() {
         if (!DefaultConfig.isPlayerGenerationThrottling()) {
             pastePausedForLoad = false;
+            pasteHealthyRecoveryTicks = 0;
             return false;
         }
 
@@ -354,10 +355,18 @@ public class Schematic {
         if (pastePausedForLoad) {
             if (mspt <= DefaultConfig.getPlayerGenerationResumeMSPT()
                     && tps >= DefaultConfig.getPlayerGenerationResumeTPS()) {
-                pastePausedForLoad = false;
-                Logger.info("BetterStructures paste queue resumed at "
-                        + String.format(Locale.ROOT, "%.1f MSPT / %.2f TPS", mspt, tps) + ".");
-                return false;
+                pasteHealthyRecoveryTicks++;
+                int requiredTicks = Math.max(1, DefaultConfig.getPlayerGenerationResumeStableTicks());
+                if (pasteHealthyRecoveryTicks >= requiredTicks) {
+                    pastePausedForLoad = false;
+                    pasteHealthyRecoveryTicks = 0;
+                    Logger.info("BetterStructures paste queue resumed after " + requiredTicks
+                            + " healthy ticks at "
+                            + String.format(Locale.ROOT, "%.1f MSPT / %.2f TPS", mspt, tps) + ".");
+                    return false;
+                }
+            } else {
+                pasteHealthyRecoveryTicks = 0;
             }
             return true;
         }
@@ -365,6 +374,7 @@ public class Schematic {
         if (mspt >= DefaultConfig.getPlayerGenerationPauseMSPT()
                 || tps <= DefaultConfig.getPlayerGenerationPauseTPS()) {
             pastePausedForLoad = true;
+            pasteHealthyRecoveryTicks = 0;
             Logger.warn("BetterStructures paste queue paused to protect TPS at "
                     + String.format(Locale.ROOT, "%.1f MSPT / %.2f TPS", mspt, tps) + ".");
             return true;
