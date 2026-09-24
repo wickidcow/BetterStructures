@@ -31,6 +31,7 @@ public final class GenerationScheduler {
     private static final Set<ChunkKey> RELEASE_AFTER_ACTIVE_WORK = new HashSet<>();
     private static BukkitTask task;
     private static boolean pausedForLoad;
+    private static int healthyRecoveryTicks;
     private static int cooldownTicks;
 
     private GenerationScheduler() {
@@ -54,6 +55,7 @@ public final class GenerationScheduler {
         RELEASE_AFTER_ACTIVE_WORK.clear();
         JOBS.clear();
         pausedForLoad = false;
+        healthyRecoveryTicks = 0;
         cooldownTicks = 0;
     }
 
@@ -108,10 +110,19 @@ public final class GenerationScheduler {
         if (pausedForLoad) {
             if (mspt <= DefaultConfig.getPlayerGenerationResumeMSPT()
                     && tps >= DefaultConfig.getPlayerGenerationResumeTPS()) {
-                pausedForLoad = false;
-                Bukkit.getLogger().info("[BetterStructures] Player-generation queue resumed at "
-                        + String.format(Locale.ROOT, "%.1f MSPT / %.2f TPS", mspt, tps) + ".");
+                healthyRecoveryTicks++;
+                int requiredTicks = Math.max(1, DefaultConfig.getPlayerGenerationResumeStableTicks());
+                if (healthyRecoveryTicks >= requiredTicks) {
+                    pausedForLoad = false;
+                    healthyRecoveryTicks = 0;
+                    Bukkit.getLogger().info("[BetterStructures] Player-generation queue resumed after "
+                            + requiredTicks + " healthy ticks at "
+                            + String.format(Locale.ROOT, "%.1f MSPT / %.2f TPS", mspt, tps) + ".");
+                } else {
+                    return;
+                }
             } else {
+                healthyRecoveryTicks = 0;
                 return;
             }
         }
@@ -119,6 +130,7 @@ public final class GenerationScheduler {
         if (mspt >= DefaultConfig.getPlayerGenerationPauseMSPT()
                 || tps <= DefaultConfig.getPlayerGenerationPauseTPS()) {
             pausedForLoad = true;
+            healthyRecoveryTicks = 0;
             Bukkit.getLogger().warning("[BetterStructures] Player-generation queue paused to protect TPS at "
                     + String.format(Locale.ROOT, "%.1f MSPT / %.2f TPS", mspt, tps)
                     + ". Queued jobs: " + JOBS.size());
