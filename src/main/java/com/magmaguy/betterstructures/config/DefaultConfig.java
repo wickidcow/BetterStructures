@@ -192,6 +192,14 @@ public class DefaultConfig extends ConfigurationFile {
                 fileConfiguration,
                 "playerGenerationPauseTPS",
                 18.5);
+        if (Math.abs(playerGenerationPauseTPS - 19.0) < 0.0001) {
+            playerGenerationPauseTPS = 18.5;
+            ConfigurationEngine.writeValue(
+                    playerGenerationPauseTPS,
+                    file,
+                    fileConfiguration,
+                    "playerGenerationPauseTPS");
+        }
         playerGenerationResumeTPS = ConfigurationEngine.setDouble(
                 List.of(
                         "TPS required before paused BetterStructures player-generation work can begin recovering.",
@@ -199,6 +207,14 @@ public class DefaultConfig extends ConfigurationFile {
                 fileConfiguration,
                 "playerGenerationResumeTPS",
                 19.5);
+        if (Math.abs(playerGenerationResumeTPS - 19.6) < 0.0001) {
+            playerGenerationResumeTPS = 19.5;
+            ConfigurationEngine.writeValue(
+                    playerGenerationResumeTPS,
+                    file,
+                    fileConfiguration,
+                    "playerGenerationResumeTPS");
+        }
         playerGenerationResumeStableTicks = ConfigurationEngine.setInt(
                 List.of(
                         "Number of consecutive healthy server ticks required before player-generation work resumes.",
