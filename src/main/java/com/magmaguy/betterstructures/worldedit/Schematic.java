@@ -2,6 +2,7 @@ package com.magmaguy.betterstructures.worldedit;
 
 import com.magmaguy.betterstructures.MetadataHandler;
 import com.magmaguy.betterstructures.config.DefaultConfig;
+import com.magmaguy.betterstructures.performance.ServerLoadThrottle;
 import com.magmaguy.betterstructures.util.LegacySchematicSanitizer;
 import com.magmaguy.betterstructures.util.WorldEditUtils;
 import com.magmaguy.magmacore.util.Logger;
@@ -280,7 +281,7 @@ public class Schematic {
     }
 
     private static void processNextPaste() {
-        long maxNanosPerTick = maxNanosPerTick(DefaultConfig.getPercentageOfTickUsedForPasting());
+        long configuredNanosPerTick = maxNanosPerTick(DefaultConfig.getPercentageOfTickUsedForPasting());
 
         RuntimeException firstFailure = null;
         int abandoned = 0;
@@ -306,7 +307,13 @@ public class Schematic {
                         try {
                             if (shouldPauseForServerLoad()) return;
 
-                            long stopTime = System.nanoTime() + maxNanosPerTick;
+                            ServerLoadThrottle.LoadSnapshot load = ServerLoadThrottle.snapshot();
+                            long adaptiveNanosPerTick = ServerLoadThrottle.adaptivePasteBudgetNanos(
+                                    configuredNanosPerTick,
+                                    load.band());
+                            if (adaptiveNanosPerTick <= 0L) return;
+
+                            long stopTime = System.nanoTime() + adaptiveNanosPerTick;
                             boolean processedAtLeastOne = false;
                             int steps = 0;
                             while (operation.hasNext()
