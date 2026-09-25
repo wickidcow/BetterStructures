@@ -2,6 +2,7 @@ package com.magmaguy.betterstructures.commands;
 
 import com.magmaguy.betterstructures.config.DefaultConfig;
 import com.magmaguy.betterstructures.performance.GenerationScheduler;
+import com.magmaguy.betterstructures.performance.ServerLoadThrottle;
 import com.magmaguy.betterstructures.util.ChunkPregenerator;
 import com.magmaguy.betterstructures.worldedit.Schematic;
 import com.magmaguy.magmacore.command.AdvancedCommand;
@@ -46,6 +47,17 @@ public class StatusCommand extends AdvancedCommand {
             generationState = "&7IDLE";
         }
 
+        ServerLoadThrottle.Band loadBand = ServerLoadThrottle.classify(
+                tps,
+                mspt,
+                DefaultConfig.getPlayerGenerationPauseTPS(),
+                DefaultConfig.getPlayerGenerationPauseMSPT());
+        int adaptiveCooldown = ServerLoadThrottle.adaptiveGenerationCooldownTicks(
+                DefaultConfig.getPlayerGenerationTicksBetweenJobs(),
+                loadBand);
+        int adaptiveScans = ServerLoadThrottle.deferredChunkScanLimit(loadBand);
+        int pastePercent = (int) Math.round(ServerLoadThrottle.pasteBudgetScale(loadBand) * 100.0);
+
         int activePregenerators = ChunkPregenerator.getActivePregenerators().size();
         long pausedPregenerators = ChunkPregenerator.getActivePregenerators().stream()
                 .filter(ChunkPregenerator::isPaused)
@@ -65,6 +77,11 @@ public class StatusCommand extends AdvancedCommand {
                         + " &8| &fResume >= "
                         + String.format(Locale.ROOT, "%.1f", DefaultConfig.getPlayerGenerationResumeTPS())
                         + " &8| &fStable: " + requiredTicks + " ticks");
+        Logger.sendMessage(commandData.getCommandSender(),
+                "&7Adaptive: &f" + loadBand.name()
+                        + " &8| &7Paste: &f" + pastePercent + "%"
+                        + " &8| &7Fit delay: &f" + adaptiveCooldown + " ticks"
+                        + " &8| &7Chunk scans: &f" + adaptiveScans + "/drain");
         Logger.sendMessage(commandData.getCommandSender(),
                 "&7Pregeneration: &f" + activePregenerators + " active"
                         + " &8| &f" + pausedPregenerators + " paused"
