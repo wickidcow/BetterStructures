@@ -35,7 +35,7 @@ public final class ServerLoadThrottle {
                 DefaultConfig.getPlayerGenerationPauseMSPT()));
     }
 
-    static Band classify(double tps, double mspt, double pauseTps, double pauseMspt) {
+    public static Band classify(double tps, double mspt, double pauseTps, double pauseMspt) {
         if (tps <= pauseTps || mspt >= pauseMspt) return Band.CRITICAL;
 
         double highTps = Math.min(20.0, pauseTps + 0.5);
