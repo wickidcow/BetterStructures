@@ -14,6 +14,7 @@ import com.magmaguy.betterstructures.config.modulegenerators.ModuleGeneratorsCon
 import com.magmaguy.betterstructures.config.modulegenerators.ModuleGeneratorsConfigFields;
 import com.magmaguy.betterstructures.modules.WFCGenerator;
 import com.magmaguy.betterstructures.performance.GenerationScheduler;
+import com.magmaguy.betterstructures.performance.ServerLoadThrottle;
 import com.magmaguy.betterstructures.schematics.SchematicContainer;
 import com.magmaguy.betterstructures.worldedit.PasteChunkReadiness;
 import org.bukkit.Bukkit;
@@ -98,6 +99,10 @@ public class NewChunkLoadEvent implements Listener {
     }
 
     private static void scheduleDeferredDrain() {
+        scheduleDeferredDrain(1L);
+    }
+
+    private static void scheduleDeferredDrain(long delayTicks) {
         if (BetterStructures.isReloading() || deferredNewChunks.isEmpty()
                 || deferredDrainTask != null || MetadataHandler.PLUGIN == null
                 || !MetadataHandler.PLUGIN.isEnabled()) return;
@@ -108,17 +113,27 @@ public class NewChunkLoadEvent implements Listener {
                     deferredDrainTask = null;
                     drainDeferredNewChunks();
                 },
-                1L);
+                Math.max(1L, delayTicks));
     }
 
     private static void drainDeferredNewChunks() {
         if (BetterStructures.isReloading() || deferredNewChunks.isEmpty()
                 || MetadataHandler.PLUGIN == null || !MetadataHandler.PLUGIN.isEnabled()) return;
 
+        ServerLoadThrottle.LoadSnapshot load = ServerLoadThrottle.snapshot();
+        int scanLimit = Math.min(
+                MAX_DEFERRED_SCANS_PER_DRAIN,
+                ServerLoadThrottle.deferredChunkScanLimit(load.band()));
+        long nextDrainDelay = ServerLoadThrottle.deferredChunkDrainDelayTicks(load.band());
+        if (scanLimit <= 0) {
+            scheduleDeferredDrain(nextDrainDelay);
+            return;
+        }
+
         Set<LoadingChunkKey> attempted = new HashSet<>();
         int attempts = 0;
         for (LoadingChunkKey loadingChunkKey : new ArrayList<>(deferredNewChunks)) {
-            if (attempts >= MAX_DEFERRED_SCANS_PER_DRAIN) break;
+            if (attempts >= scanLimit) break;
             World world = Bukkit.getWorld(loadingChunkKey.worldId());
             if (world == null || !world.isChunkLoaded(loadingChunkKey.x(), loadingChunkKey.z())) continue;
 
@@ -131,7 +146,7 @@ public class NewChunkLoadEvent implements Listener {
                 if (scanned) {
                     deferredNewChunks.remove(loadingChunkKey);
                 } else {
-                    scheduleDeferredDrain();
+                    scheduleDeferredDrain(nextDrainDelay);
                     return;
                 }
             } catch (Throwable throwable) {
@@ -148,7 +163,7 @@ public class NewChunkLoadEvent implements Listener {
             if (attempted.contains(loadingChunkKey)) continue;
             World world = Bukkit.getWorld(loadingChunkKey.worldId());
             if (world != null && world.isChunkLoaded(loadingChunkKey.x(), loadingChunkKey.z())) {
-                scheduleDeferredDrain();
+                scheduleDeferredDrain(nextDrainDelay);
                 return;
             }
         }
