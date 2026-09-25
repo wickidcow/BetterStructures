@@ -49,13 +49,17 @@ public final class PasteChunkReadiness implements AutoCloseable {
     }
 
     public boolean ready(Location location) {
+        return ready(location.getBlockX(), location.getBlockZ());
+    }
+
+    public boolean ready(int blockX, int blockZ) {
         if (closed) return false;
         if (Bukkit.getWorld(world.getUID()) != world) {
             throw new IllegalStateException("Paste world was unloaded");
         }
 
-        int x = location.getBlockX() >> 4;
-        int z = location.getBlockZ() >> 4;
+        int x = blockX >> 4;
+        int z = blockZ >> 4;
         long key = chunkKey(x, z);
         if (heldChunks.containsKey(key)) return true;
 
