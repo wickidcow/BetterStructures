@@ -48,15 +48,19 @@ public final class ServerLoadThrottle {
         return Band.HEALTHY;
     }
 
-    public static long adaptivePasteBudgetNanos(long configuredBudgetNanos, Band band) {
-        if (band == Band.CRITICAL) return 0L;
-        double scale = switch (band) {
+    public static double pasteBudgetScale(Band band) {
+        return switch (band) {
             case HEALTHY -> 1.0;
             case WARM -> 0.75;
             case ELEVATED -> 0.50;
             case HIGH -> 0.25;
             case CRITICAL -> 0.0;
         };
+    }
+
+    public static long adaptivePasteBudgetNanos(long configuredBudgetNanos, Band band) {
+        double scale = pasteBudgetScale(band);
+        if (scale <= 0.0) return 0L;
         return Math.max(MIN_ADAPTIVE_PASTE_NANOS, (long) (configuredBudgetNanos * scale));
     }
 
