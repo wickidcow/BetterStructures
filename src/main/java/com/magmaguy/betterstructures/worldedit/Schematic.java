@@ -184,7 +184,12 @@ public class Schematic {
         BaseBlock baseBlock = schematicClipboard.getFullBlock(adjustedClipboardLocation);
         BlockState blockState = baseBlock.toImmutableState();
         Material material = WorldEditUtils.adaptMaterial(blockState);
-        Block worldBlock = adjustedLocation.clone().add(new Vector(x, y, z)).getBlock();
+        org.bukkit.World bukkitWorld = adjustedLocation.getWorld();
+        if (bukkitWorld == null) throw new IllegalStateException("Paste world is unavailable");
+        Block worldBlock = bukkitWorld.getBlockAt(
+                adjustedLocation.getBlockX() + x,
+                adjustedLocation.getBlockY() + y,
+                adjustedLocation.getBlockZ() + z);
 
         if (material == Material.BARRIER) return;
         if (WorldEditUtils.isAir(blockState) && worldBlock.getType().isAir()) return;
@@ -552,9 +557,9 @@ public class Schematic {
                 if (!cursor.hasNext()) return true;
                 nextCoordinate = cursor.next();
             }
-            Location target = adjustedLocation.clone().add(
-                    nextCoordinate.x(), nextCoordinate.y(), nextCoordinate.z());
-            return chunks.ready(target);
+            return chunks.ready(
+                    adjustedLocation.getBlockX() + nextCoordinate.x(),
+                    adjustedLocation.getBlockZ() + nextCoordinate.z());
         }
 
         @Override
