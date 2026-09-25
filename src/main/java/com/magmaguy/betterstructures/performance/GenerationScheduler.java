@@ -149,6 +149,12 @@ public final class GenerationScheduler {
             return;
         }
 
+        ServerLoadThrottle.Band loadBand = ServerLoadThrottle.classify(
+                tps,
+                mspt,
+                DefaultConfig.getPlayerGenerationPauseTPS(),
+                DefaultConfig.getPlayerGenerationPauseMSPT());
+
         GenerationJob job = JOBS.pollFirst();
         if (job == null) return;
 
@@ -173,7 +179,9 @@ public final class GenerationScheduler {
             }
         }
 
-        cooldownTicks = Math.max(0, DefaultConfig.getPlayerGenerationTicksBetweenJobs());
+        cooldownTicks = ServerLoadThrottle.adaptiveGenerationCooldownTicks(
+                DefaultConfig.getPlayerGenerationTicksBetweenJobs(),
+                loadBand);
     }
 
     private static void releaseTicket(ChunkKey key) {
